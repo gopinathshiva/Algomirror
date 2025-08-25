@@ -8,7 +8,8 @@
       "Bash(npm run build-css:*)",
       "Bash(npx tailwindcss:*)",
       "Bash(taskkill:*)",
-      "Bash(del create_favicons.py)"
+      "Bash(del create_favicons.py)",
+      "Bash(del instancealgomirror.db)"
     ],
     "deny": [],
     "ask": []

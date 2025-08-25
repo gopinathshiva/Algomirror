@@ -5,6 +5,12 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block content %}
+<!-- Set page metadata for ping monitoring -->
+<script>
+    document.body.dataset.page = 'dashboard';
+    document.body.dataset.authenticated = 'true';
+</script>
+
 <div class="space-y-6">
     <!-- Welcome Header -->
     <div class="flex justify-between items-center">
@@ -38,7 +44,11 @@
             </div>
             <div class="stat-title">Total Accounts</div>
             <div class="stat-value text-primary">{{ dashboard_data.total_accounts }}</div>
-            <div class="stat-desc">{{ dashboard_data.connected_accounts }} connected</div>
+            <div class="stat-desc">
+                <span id="connection-status-summary" class="font-semibold text-success">
+                    {{ dashboard_data.connected_accounts }}/{{ dashboard_data.total_accounts }} Connected
+                </span>
+            </div>
         </div>
 
         <div class="stat">
@@ -91,12 +101,22 @@
                 <div class="card bg-base-200 shadow-sm">
                     <div class="card-body p-4">
                         <div class="flex justify-between items-start">
-                            <div>
-                                <h3 class="font-semibold">{{ account.name }}</h3>
-                                <p class="text-sm opacity-70">{{ account.broker }}</p>
+                            <div class="flex items-center gap-2">
+                                <div id="account-status-{{ account.id }}" class="w-3 h-3 rounded-full {{ 'bg-success' if account.status == 'connected' else 'bg-error' if account.status == 'failed' else 'bg-warning' }}" title="{{ account.name }}: {{ account.status }}"></div>
+                                <div>
+                                    <h3 class="font-semibold">{{ account.name }}</h3>
+                                    <p class="text-sm opacity-70">{{ account.broker }}</p>
+                                </div>
                             </div>
-                            <div class="badge badge-{{ 'success' if account.status == 'connected' else 'error' if account.status == 'failed' else 'warning' }} badge-sm">
-                                {{ account.status }}
+                            <div class="flex items-center gap-2">
+                                <button onclick="window.pingMonitor?.forceCheckAccount({{ account.id }})" class="btn btn-ghost btn-xs" title="Force ping check">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                </button>
+                                <div class="badge badge-{{ 'success' if account.status == 'connected' else 'error' if account.status == 'failed' else 'warning' }} badge-sm">
+                                    {{ account.status }}
+                                </div>
                             </div>
                         </div>
                         
@@ -263,4 +283,7 @@ function refreshAllData() {
         });
 }
 </script>
+
+<!-- Include ping monitoring script -->
+<script src="{{ url_for('static', filename='js/ping_monitor.js') }}"></script>
 {% endblock %}

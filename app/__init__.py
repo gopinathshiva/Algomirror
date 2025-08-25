@@ -1,7 +1,11 @@
 import os
 import logging
+import warnings
 from logging.handlers import RotatingFileHandler
 from flask import Flask
+
+# Suppress numba warning about nopython parameter
+warnings.filterwarnings('ignore', message='nopython is set for njit and is ignored', category=RuntimeWarning)
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_migrate import Migrate
@@ -118,5 +122,9 @@ def create_app(config_name=None):
     with app.app_context():
         db.create_all()
         app.logger.info('Database tables created', extra={'event': 'db_init'})
+    
+    # Initialize ping monitor
+    from app.utils.ping_monitor import ping_monitor
+    ping_monitor.init_app(app)
     
     return app

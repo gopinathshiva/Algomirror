@@ -51,10 +51,18 @@ class Config:
     DEFAULT_OPENALGO_HOST = 'http://127.0.0.1:5000'
     DEFAULT_OPENALGO_WS = 'ws://127.0.0.1:8765'
     
+    # Ping monitoring configuration
+    PING_MONITORING_INTERVAL = int(os.environ.get('PING_MONITORING_INTERVAL', 30))
+    PING_MONITORING_ENABLED = os.environ.get('PING_MONITORING_ENABLED', 'true').lower() == 'true'
+    PING_MAX_FAILURES = int(os.environ.get('PING_MAX_FAILURES', 3))
+    PING_QUIET_MODE = os.environ.get('PING_QUIET_MODE', 'false').lower() == 'true'  # Reduces log noise
+    
 class DevelopmentConfig(Config):
     DEBUG = True
     SESSION_COOKIE_SECURE = False
     WTF_CSRF_SSL_STRICT = False
+    # Enable quiet mode by default in development to reduce ping noise
+    PING_QUIET_MODE = os.environ.get('PING_QUIET_MODE', 'true').lower() == 'true'
     
 class ProductionConfig(Config):
     DEBUG = False

@@ -190,14 +190,13 @@ let previousData = {};
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Start real-time updates if chain data exists
-    {% if chain_data %}
+    // Always try to start real-time updates
     startRealTimeUpdates();
-    {% endif %}
     
     // Handle underlying change
     document.getElementById('underlyingSelect').addEventListener('change', function() {
         refreshOptionChain();
+        startRealTimeUpdates(); // Restart SSE with new underlying
     });
     
     // Handle expiry change
@@ -215,21 +214,37 @@ function startRealTimeUpdates() {
     const underlying = document.getElementById('underlyingSelect').value;
     const expiry = document.getElementById('expirySelect').value;
     
-    // Create SSE connection
-    eventSource = new EventSource(`/trading/api/option-chain/stream?underlying=${underlying}&expiry=${expiry}`);
+    // Update status to connecting
+    updateStatus('Connecting...', 'badge-warning');
+    
+    // Create SSE connection - using the /stream/<underlying> endpoint
+    eventSource = new EventSource(`/trading/api/option-chain/stream/${underlying}`);
+    
+    eventSource.onopen = function() {
+        console.log('SSE Connection opened');
+        updateStatus('Connected', 'badge-success');
+    };
     
     eventSource.onmessage = function(event) {
         try {
             const data = JSON.parse(event.data);
             
-            if (data.error) {
-                console.error('SSE Error:', data.error);
-                updateStatus('Error', 'badge-error');
-            } else {
-                updateOptionChain(data);
-                updateStatus('Connected', 'badge-success');
-                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            if (data.status === 'inactive') {
+                console.log('Option chain inactive:', data.message);
+                updateStatus('Inactive', 'badge-warning');
+                return;
             }
+            
+            if (data.status === 'error') {
+                console.error('SSE Error:', data.message);
+                updateStatus('Error', 'badge-error');
+                return;
+            }
+            
+            // Update the option chain display
+            updateOptionChain(data);
+            updateStatus('Connected', 'badge-success');
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
         } catch (e) {
             console.error('Parse error:', e);
         }
@@ -238,7 +253,22 @@ function startRealTimeUpdates() {
     eventSource.onerror = function(error) {
         console.error('SSE Connection error:', error);
         updateStatus('Disconnected', 'badge-error');
+        // Try to reconnect after 5 seconds
+        setTimeout(function() {
+            if (eventSource.readyState === EventSource.CLOSED) {
+                console.log('Attempting to reconnect...');
+                startRealTimeUpdates();
+            }
+        }, 5000);
     };
+}
+
+function updateStatus(status, badgeClass) {
+    const statusElement = document.querySelector('#wsStatus');
+    if (statusElement) {
+        statusElement.textContent = status;
+        statusElement.className = `badge ${badgeClass}`;
+    }
 }
 
 function updateOptionChain(data) {

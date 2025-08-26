@@ -304,7 +304,9 @@ class OptionChainManager:
         Extract top-level bid/ask for order management
         """
         symbol = data.get('symbol')
-        logger.info(f"[OPTION_CHAIN] Received depth update for {symbol}, LTP={data.get('ltp')}")
+        
+        # Log raw data structure for debugging
+        logger.info(f"[OPTION_CHAIN_RAW] Data keys: {list(data.keys())}, LTP={data.get('ltp')}, bids count={len(data.get('bids', []))}, asks count={len(data.get('asks', []))}")
         
         if symbol in self.subscription_map:
             strike_info = self.subscription_map[symbol]
@@ -313,19 +315,44 @@ class OptionChainManager:
             
             logger.info(f"[OPTION_CHAIN] Updating {self.underlying} {strike} {option_type} with depth data")
             
-            # Update with depth data
-            bids = data.get('bids', [])
-            asks = data.get('asks', [])
+            # Update with depth data - handle various formats
+            bids = data.get('bids', data.get('depth', {}).get('buy', []))
+            asks = data.get('asks', data.get('depth', {}).get('sell', []))
+            
+            # Extract LTP - try multiple possible fields
+            ltp = data.get('ltp') or data.get('last_price') or data.get('lastPrice') or 0
+            
+            # Handle bid/ask format variations
+            best_bid = 0
+            best_ask = 0
+            bid_qty = 0
+            ask_qty = 0
+            
+            if bids and len(bids) > 0:
+                if isinstance(bids[0], dict):
+                    best_bid = bids[0].get('price', bids[0].get('Price', 0))
+                    bid_qty = bids[0].get('quantity', bids[0].get('Quantity', bids[0].get('qty', 0)))
+                elif isinstance(bids[0], (list, tuple)) and len(bids[0]) >= 2:
+                    best_bid = bids[0][0]  # Price at index 0
+                    bid_qty = bids[0][1]   # Quantity at index 1
+            
+            if asks and len(asks) > 0:
+                if isinstance(asks[0], dict):
+                    best_ask = asks[0].get('price', asks[0].get('Price', 0))
+                    ask_qty = asks[0].get('quantity', asks[0].get('Quantity', asks[0].get('qty', 0)))
+                elif isinstance(asks[0], (list, tuple)) and len(asks[0]) >= 2:
+                    best_ask = asks[0][0]  # Price at index 0
+                    ask_qty = asks[0][1]   # Quantity at index 1
             
             depth_data = {
-                'ltp': data.get('ltp', 0),
-                'bid': bids[0].get('price', 0) if bids else 0,
-                'ask': asks[0].get('price', 0) if asks else 0,
-                'bid_qty': bids[0].get('quantity', 0) if bids else 0,
-                'ask_qty': asks[0].get('quantity', 0) if asks else 0,
+                'ltp': float(ltp) if ltp else 0,
+                'bid': float(best_bid) if best_bid else 0,
+                'ask': float(best_ask) if best_ask else 0,
+                'bid_qty': int(bid_qty) if bid_qty else 0,
+                'ask_qty': int(ask_qty) if ask_qty else 0,
                 'spread': 0,
-                'volume': data.get('volume', 0),
-                'oi': data.get('oi', 0)
+                'volume': data.get('volume', data.get('Volume', 0)),
+                'oi': data.get('oi', data.get('openInterest', data.get('OI', 0)))
             }
             
             # Calculate spread

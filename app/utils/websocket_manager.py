@@ -218,7 +218,8 @@ class ProfessionalWebSocketManager:
         try:
             data = json.loads(message)
             
-            # Log ALL incoming messages for debugging
+            # Log ALL incoming messages for debugging - include full data structure
+            logger.info(f"[WS_RAW] Full message: {json.dumps(data)[:500]}")
             logger.info(f"[WS_MSG] Received: type={data.get('type')}, symbol={data.get('symbol')}, exchange={data.get('exchange')}")
             
             # Handle authentication response
@@ -245,12 +246,23 @@ class ProfessionalWebSocketManager:
                 self.connection_pool['metrics']['last_message_time'] = datetime.now()
             
             # Process market data - handle various message types
-            # OpenAlgo might send data without explicit 'type' field
-            if data.get("type") == "market_data" or data.get("ltp") is not None:
-                logger.info(f"[WS_DATA] Processing market data for {data.get('symbol')}: LTP={data.get('ltp')}, mode={data.get('mode')}")
-                self.data_processor.on_data_received(data)
-            elif data.get("symbol") and (data.get("ltp") or data.get("bid") or data.get("ask")):
-                # Sometimes data comes without type field
+            # OpenAlgo WebSocket format includes nested 'data' field
+            if data.get("type") == "market_data":
+                # Extract actual market data from nested 'data' field
+                market_data = data.get('data', {})
+                if not market_data:
+                    market_data = data  # Fallback to root level
+                
+                # Merge symbol info from root level if needed
+                if not market_data.get('symbol') and data.get('symbol'):
+                    market_data['symbol'] = data['symbol']
+                    market_data['exchange'] = data.get('exchange', 'NFO')
+                    market_data['mode'] = data.get('mode', 3)
+                
+                logger.info(f"[WS_DATA] Processing market data for {market_data.get('symbol')}: LTP={market_data.get('ltp')}, bids={len(market_data.get('bids', []))}, asks={len(market_data.get('asks', []))}")
+                self.data_processor.on_data_received(market_data)
+            elif data.get("ltp") is not None or data.get("symbol"):
+                # Direct data format
                 logger.info(f"[WS_DATA] Processing price update for {data.get('symbol')}: LTP={data.get('ltp')}")
                 self.data_processor.on_data_received(data)
             else:

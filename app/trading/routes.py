@@ -441,6 +441,40 @@ def api_option_chain(underlying):
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@trading_bp.route('/api/option-chain/stream/<underlying>')
+@login_required
+def option_chain_stream(underlying):
+    """Get real-time option chain updates via server-sent events"""
+    def generate():
+        from app.utils.background_service import option_chain_service
+        import json
+        import time
+        
+        while True:
+            try:
+                # Check if option chain is active
+                if underlying in option_chain_service.active_managers:
+                    manager = option_chain_service.active_managers[underlying]
+                    chain_data = manager.get_option_chain()
+                    
+                    # Send as server-sent event
+                    yield f"data: {json.dumps(chain_data)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'status': 'inactive', 'message': f'Option chain not active for {underlying}'})}\n\n"
+                
+                # Update every second
+                time.sleep(1)
+                
+            except GeneratorExit:
+                break
+            except Exception as e:
+                current_app.logger.error(f"Error streaming option chain: {e}")
+                yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+                break
+    
+    return Response(generate(), mimetype='text/event-stream')
+
+
 @trading_bp.route('/api/option-chain/status')
 @login_required
 def option_chain_status():
@@ -509,9 +543,9 @@ def start_option_chains():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
-@trading_bp.route('/api/option-chain/stream')
+@trading_bp.route('/api/option-chain/sse')
 @login_required
-def option_chain_stream():
+def option_chain_sse():
     """Server-Sent Events endpoint for live option chain updates"""
     
     # Capture request parameters before entering generator

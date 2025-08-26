@@ -6,6 +6,7 @@ Automatically starts option chains when primary account connects
 import threading
 import logging
 from datetime import datetime, time
+import time as time_module
 from typing import Optional, Dict, Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -89,10 +90,17 @@ class OptionChainBackgroundService:
             
             # Check if within trading hours
             if self.is_trading_hours():
-                # Start option chains for both NIFTY and BANKNIFTY
-                self.start_option_chain('NIFTY')
-                self.start_option_chain('BANKNIFTY')
-                logger.info("Option chains started automatically for NIFTY and BANKNIFTY")
+                # Start option chains in background to avoid blocking Flask startup
+                import threading
+                def start_chains():
+                    time_module.sleep(2)  # Give Flask time to start
+                    self.start_option_chain('NIFTY')
+                    self.start_option_chain('BANKNIFTY')
+                    logger.info("Option chains started automatically for NIFTY and BANKNIFTY")
+                
+                thread = threading.Thread(target=start_chains)
+                thread.daemon = True
+                thread.start()
             else:
                 logger.info("Outside trading hours, option chains will start at market open")
                 
@@ -193,6 +201,18 @@ class OptionChainBackgroundService:
                     ws_url=self.primary_account.websocket_url,
                     api_key=self.primary_account.get_api_key()
                 )
+                
+                # Wait for authentication to complete (max 5 seconds)
+                auth_wait_time = 0
+                while not ws_manager.authenticated and auth_wait_time < 5:
+                    time_module.sleep(0.5)
+                    auth_wait_time += 0.5
+                    
+                if not ws_manager.authenticated:
+                    logger.error(f"WebSocket authentication timeout for {underlying}")
+                    return False
+                
+                logger.info(f"WebSocket authenticated, proceeding with option chain setup")
             
             # Create option chain manager
             option_manager = OptionChainManager(
@@ -203,6 +223,9 @@ class OptionChainBackgroundService:
             
             # Initialize with API client
             option_manager.initialize(client)
+            
+            # Start monitoring
+            option_manager.start_monitoring()
             
             # Store managers
             self.active_managers[underlying] = option_manager
@@ -224,7 +247,7 @@ class OptionChainBackgroundService:
             # Stop option chain manager
             manager = self.active_managers.get(underlying)
             if manager:
-                manager.stop()
+                manager.stop_monitoring()
             
             # Disconnect WebSocket
             ws_manager = self.websocket_managers.get(underlying)

@@ -56,6 +56,9 @@ class WebSocketDataProcessor:
         """
         try:
             mode = data.get('mode', 'ltp')
+            symbol = data.get('symbol', 'UNKNOWN')
+            
+            logger.info(f"[DATA_PROCESSOR] Routing data for {symbol}, mode={mode}, handlers: quote={len(self.quote_handlers)}, depth={len(self.depth_handlers)}, ltp={len(self.ltp_handlers)}")
             
             if mode == 'quote':
                 self.handle_quote_update(data)
@@ -64,7 +67,7 @@ class WebSocketDataProcessor:
             else:  # ltp
                 self.handle_ltp_update(data)
         except Exception as e:
-            logger.error(f"Error processing WebSocket data: {e}")
+            logger.error(f"Error processing WebSocket data: {e}, Data: {data}")
     
     def handle_quote_update(self, data):
         """Process quote mode data"""
@@ -161,11 +164,11 @@ class ProfessionalWebSocketManager:
         try:
             self.ws_url = ws_url
             self.api_key = api_key
+            self.authenticated = False
             
-            # Create WebSocket connection
+            # Create WebSocket connection (no header auth - uses message auth)
             self.ws = websocket.WebSocketApp(
                 ws_url,
-                header={'Authorization': f'Bearer {api_key}'},
                 on_open=self.on_open,
                 on_message=self.on_message,
                 on_error=self.on_error,
@@ -176,6 +179,9 @@ class ProfessionalWebSocketManager:
             self.ws_thread = threading.Thread(target=self.ws.run_forever)
             self.ws_thread.daemon = True
             self.ws_thread.start()
+            
+            # Wait for connection to establish
+            time.sleep(1)
             
             self.active = True
             logger.info("WebSocket connection established")
@@ -190,27 +196,70 @@ class ProfessionalWebSocketManager:
         logger.info("WebSocket connection opened")
         self.backoff_strategy.reset()
         
-        # Resubscribe to all symbols
-        if self.subscriptions:
+        # Send authentication message (OpenAlgo style)
+        self.authenticate()
+        
+        # Resubscribe to all symbols after auth
+        if self.subscriptions and self.authenticated:
             self.resubscribe_all()
+    
+    def authenticate(self):
+        """Authenticate with WebSocket server using OpenAlgo protocol"""
+        if self.ws:
+            auth_msg = {
+                "action": "authenticate",
+                "api_key": self.api_key
+            }
+            logger.info(f"Authenticating with API key: {self.api_key[:8]}...{self.api_key[-8:]}")
+            self.ws.send(json.dumps(auth_msg))
     
     def on_message(self, ws, message):
         """Handle incoming WebSocket messages"""
         try:
             data = json.loads(message)
             
+            # Log ALL incoming messages for debugging
+            logger.info(f"[WS_MSG] Received: type={data.get('type')}, symbol={data.get('symbol')}, exchange={data.get('exchange')}")
+            
+            # Handle authentication response
+            if data.get("type") == "auth":
+                if data.get("status") == "success":
+                    self.authenticated = True
+                    logger.info("Authentication successful!")
+                    # Resubscribe after successful auth
+                    if self.subscriptions:
+                        self.resubscribe_all()
+                else:
+                    logger.error(f"Authentication failed: {data}")
+                    self.authenticated = False
+                return
+            
+            # Handle subscription response
+            if data.get("type") == "subscribe":
+                logger.info(f"[WS_SUB] Subscription response: status={data.get('status')}, message={data.get('message')}")
+                return
+            
             # Update metrics
             if self.connection_pool:
                 self.connection_pool['metrics']['messages_received'] += 1
                 self.connection_pool['metrics']['last_message_time'] = datetime.now()
             
-            # Process data
-            self.data_processor.on_data_received(data)
+            # Process market data - handle various message types
+            # OpenAlgo might send data without explicit 'type' field
+            if data.get("type") == "market_data" or data.get("ltp") is not None:
+                logger.info(f"[WS_DATA] Processing market data for {data.get('symbol')}: LTP={data.get('ltp')}, mode={data.get('mode')}")
+                self.data_processor.on_data_received(data)
+            elif data.get("symbol") and (data.get("ltp") or data.get("bid") or data.get("ask")):
+                # Sometimes data comes without type field
+                logger.info(f"[WS_DATA] Processing price update for {data.get('symbol')}: LTP={data.get('ltp')}")
+                self.data_processor.on_data_received(data)
+            else:
+                logger.debug(f"[WS_UNKNOWN] Unhandled message type: {data}")
             
         except json.JSONDecodeError:
-            logger.error(f"Invalid JSON message: {message}")
+            logger.error(f"Invalid JSON message: {message[:100]}...")
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.error(f"Error processing message: {e}, Data: {message[:100]}...")
     
     def on_error(self, ws, error):
         """WebSocket error callback"""
@@ -272,28 +321,134 @@ class ProfessionalWebSocketManager:
         else:
             logger.critical("No backup accounts available for failover")
     
+    def subscribe_batch(self, instruments, mode='ltp'):
+        """
+        Subscribe to multiple instruments by sending individual messages
+        instruments: list of dicts with 'symbol' and 'exchange' keys
+        mode: subscription mode ('ltp', 'quote', 'depth')
+        """
+        try:
+            if not instruments:
+                logger.warning("[WS_BATCH] No instruments provided")
+                return False
+                
+            # Check if authenticated
+            if not self.authenticated:
+                logger.warning("[WS_BATCH] Not authenticated, queuing batch subscription")
+                # Queue individual subscriptions for later
+                for inst in instruments:
+                    subscription = {
+                        'symbol': inst.get('symbol'),
+                        'exchange': inst.get('exchange'),
+                        'mode': mode
+                    }
+                    self.subscriptions.add(json.dumps(subscription))
+                return False
+            
+            if self.ws and self.ws.sock and self.ws.sock.connected:
+                # Map mode names to numbers
+                mode_map = {
+                    'ltp': 1,      # Mode 1 for LTP
+                    'quote': 2,    # Mode 2 for Quote
+                    'depth': 3     # Mode 3 for Market Depth
+                }
+                
+                mode_num = mode_map.get(mode, 1)  # Default to LTP
+                
+                logger.info(f"[WS_BATCH] Subscribing to {len(instruments)} instruments in {mode} mode")
+                
+                # Send individual subscription messages for each instrument
+                for inst in instruments:
+                    symbol = inst.get('symbol')
+                    exchange = inst.get('exchange')
+                    
+                    if not symbol or not exchange:
+                        logger.warning(f"[WS_BATCH] Skipping invalid instrument: {inst}")
+                        continue
+                    
+                    message = {
+                        'action': 'subscribe',
+                        'symbol': symbol,
+                        'exchange': exchange,
+                        'mode': mode_num,
+                        'depth': 5  # Default depth level
+                    }
+                    
+                    self.ws.send(json.dumps(message))
+                    
+                    # Add to subscriptions for tracking
+                    subscription = {
+                        'symbol': symbol,
+                        'exchange': exchange,
+                        'mode': mode
+                    }
+                    self.subscriptions.add(json.dumps(subscription))
+                    
+                    # Minimal delay between subscriptions
+                    # Removed to prevent blocking Flask startup
+                
+                return True
+            else:
+                logger.warning("[WS_BATCH] WebSocket not connected")
+                return False
+                
+        except Exception as e:
+            logger.error(f"[WS_BATCH] Error: {e}")
+            return False
+    
     def subscribe(self, subscription):
         """Subscribe to symbol with specified mode"""
         try:
+            symbol = subscription.get('symbol')
+            exchange = subscription.get('exchange')
+            mode = subscription.get('mode', 'ltp')
+            
+            # Validate required fields
+            if not symbol or not exchange:
+                logger.error(f"[WS_SUBSCRIBE] Missing symbol or exchange: symbol={symbol}, exchange={exchange}")
+                return False
+            
+            logger.info(f"[WS_SUBSCRIBE] Request: {symbol} on {exchange} in {mode} mode")
+            
+            # Check if authenticated
+            if not self.authenticated:
+                logger.warning(f"[WS_SUBSCRIBE] Not authenticated, queuing {symbol}")
+                self.subscriptions.add(json.dumps(subscription))
+                return False
+                
             if self.ws and self.ws.sock and self.ws.sock.connected:
-                message = {
-                    'action': 'subscribe',
-                    'exchange': subscription.get('exchange'),
-                    'symbol': subscription.get('symbol'),
-                    'mode': subscription.get('mode', 'ltp')
+                # Use exact OpenAlgo subscription format - individual messages per symbol
+                # Map mode names to numbers
+                mode_map = {
+                    'ltp': 1,      # Mode 1 for LTP
+                    'quote': 2,    # Mode 2 for Quote
+                    'depth': 3     # Mode 3 for Market Depth
                 }
                 
+                mode_num = mode_map.get(mode, 1)  # Default to LTP
+                
+                message = {
+                    'action': 'subscribe',
+                    'symbol': symbol,
+                    'exchange': exchange,
+                    'mode': mode_num,
+                    'depth': 5  # Default depth level
+                }
+                
+                logger.info(f"[WS_SUBSCRIBE] Sending subscription for {symbol}")
                 self.ws.send(json.dumps(message))
                 self.subscriptions.add(json.dumps(subscription))
-                logger.debug(f"Subscribed to {subscription}")
+                
+                # Small delay between subscriptions to avoid overwhelming server
+                time.sleep(0.05)  # 50ms delay
                 return True
             else:
-                logger.warning("WebSocket not connected, queuing subscription")
+                logger.warning(f"[WS_SUBSCRIBE] WebSocket not connected, queuing {symbol}")
                 self.subscriptions.add(json.dumps(subscription))
                 return False
                 
         except Exception as e:
-            logger.error(f"Subscription error: {e}")
+            logger.error(f"[WS_SUBSCRIBE] Error: {e}")
             return False
     
     def unsubscribe(self, subscription):
@@ -324,17 +479,41 @@ class ProfessionalWebSocketManager:
         """Resubscribe to all symbols after reconnection"""
         logger.info(f"Resubscribing to {len(self.subscriptions)} symbols")
         
+        # Map mode names to numbers
+        mode_map = {
+            'ltp': 1,      # Mode 1 for LTP
+            'quote': 2,    # Mode 2 for Quote
+            'depth': 3     # Mode 3 for Market Depth
+        }
+        
+        # Send individual subscription messages (OpenAlgo format)
         for sub_str in self.subscriptions:
             try:
                 subscription = json.loads(sub_str)
+                symbol = subscription.get('symbol')
+                exchange = subscription.get('exchange')
+                mode = subscription.get('mode', 'ltp')
+                
+                if not symbol or not exchange:
+                    logger.warning(f"[WS_RESUB] Skipping invalid subscription: {subscription}")
+                    continue
+                
+                mode_num = mode_map.get(mode, 1)  # Default to LTP
+                
                 message = {
                     'action': 'subscribe',
-                    'exchange': subscription.get('exchange'),
-                    'symbol': subscription.get('symbol'),
-                    'mode': subscription.get('mode', 'ltp')
+                    'symbol': symbol,
+                    'exchange': exchange,
+                    'mode': mode_num,
+                    'depth': 5  # Default depth level
                 }
+                
                 self.ws.send(json.dumps(message))
-                time.sleep(0.01)  # Small delay between subscriptions
+                time.sleep(0.05)  # Small delay between subscriptions
+                
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse subscription: {sub_str}")
+                continue
             except Exception as e:
                 logger.error(f"Failed to resubscribe: {e}")
     

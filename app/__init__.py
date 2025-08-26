@@ -130,6 +130,21 @@ def create_app(config_name=None):
     # Initialize option chain background service
     from app.utils.background_service import option_chain_service
     option_chain_service.start_service()
+    
+    # Load existing primary account within app context
+    with app.app_context():
+        from app.models import TradingAccount
+        primary = TradingAccount.query.filter_by(
+            is_primary=True,
+            is_active=True
+        ).first()
+        
+        if primary:
+            app.logger.info(f'Found primary account: {primary.account_name}')
+            # Check if within trading hours and trigger option chains
+            if primary.connection_status == 'connected':
+                option_chain_service.on_primary_account_connected(primary)
+        
     app.logger.info('Option chain background service started', extra={'event': 'service_init'})
     
     return app

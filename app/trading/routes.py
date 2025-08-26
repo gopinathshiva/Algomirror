@@ -445,26 +445,67 @@ def api_option_chain(underlying):
 @login_required
 def option_chain_status():
     """Check option chain monitoring status"""
+    from app.utils.background_service import option_chain_service
+    
     try:
-        nifty_manager = OptionChainManager('NIFTY', None)
-        banknifty_manager = OptionChainManager('BANKNIFTY', None)
+        nifty_manager = option_chain_service.active_managers.get('NIFTY')
+        banknifty_manager = option_chain_service.active_managers.get('BANKNIFTY')
         
         status = {
+            'service_running': option_chain_service.is_running,
+            'primary_account': option_chain_service.primary_account.account_name if option_chain_service.primary_account else None,
+            'websockets_connected': len(option_chain_service.websocket_managers),
             'nifty': {
-                'active': nifty_manager.is_active(),
-                'atm_strike': nifty_manager.atm_strike,
-                'underlying_ltp': nifty_manager.underlying_ltp
+                'active': nifty_manager is not None,
+                'strikes': len(nifty_manager.option_data) if nifty_manager else 0,
+                'atm_strike': nifty_manager.atm_strike if nifty_manager else 0,
+                'underlying_ltp': nifty_manager.underlying_ltp if nifty_manager else 0
             },
             'banknifty': {
-                'active': banknifty_manager.is_active(),
-                'atm_strike': banknifty_manager.atm_strike,
-                'underlying_ltp': banknifty_manager.underlying_ltp
+                'active': banknifty_manager is not None,
+                'strikes': len(banknifty_manager.option_data) if banknifty_manager else 0,
+                'atm_strike': banknifty_manager.atm_strike if banknifty_manager else 0,
+                'underlying_ltp': banknifty_manager.underlying_ltp if banknifty_manager else 0
             }
         }
         
         return jsonify({'status': 'success', 'data': status})
         
     except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@trading_bp.route('/api/option-chain/start', methods=['POST'])
+@login_required
+def start_option_chains():
+    """Manually trigger option chain start"""
+    from app.utils.background_service import option_chain_service
+    
+    try:
+        # Get primary account
+        primary_account = current_user.get_primary_account()
+        
+        if not primary_account:
+            return jsonify({'status': 'error', 'message': 'No primary account configured'}), 400
+        
+        # Update connection status if needed
+        if primary_account.connection_status != 'connected':
+            primary_account.connection_status = 'connected'
+            primary_account.last_connected = datetime.utcnow()
+            db.session.commit()
+        
+        # Trigger option chain service
+        option_chain_service.on_primary_account_connected(primary_account)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Option chains started',
+            'primary_account': primary_account.account_name,
+            'active_chains': list(option_chain_service.active_managers.keys())
+        })
+        
+    except Exception as e:
+        current_app.logger.error(f"Error starting option chains: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 

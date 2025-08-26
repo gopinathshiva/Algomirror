@@ -161,7 +161,46 @@ class OptionChainManager:
     def construct_option_symbol(self, strike, option_type):
         """Construct OpenAlgo option symbol"""
         # Format: [Base Symbol][Expiration Date][Strike Price][Option Type]
-        # Example: NIFTY17JUL2524500CE
+        # Date format: DDMMMYY (e.g., 28AUG25 for August 28, 2025)
+        # Example: NIFTY28AUG2524800CE
+        
+        # Parse expiry date to proper format
+        expiry_formatted = None
+        
+        if isinstance(self.expiry, str):
+            # For OpenAlgo, format should be DDMMMYY (e.g., 28AUG25)
+            # But we only need DDMMM for the actual symbol
+            try:
+                # Handle format like "28-AUG-25" -> "28AUG"
+                parts = self.expiry.split('-')
+                if len(parts) >= 2:
+                    day = parts[0].zfill(2)
+                    month = parts[1].upper()[:3]
+                    # NO YEAR in the expiry part of symbol
+                    expiry_formatted = f"{day}{month}"
+                else:
+                    # Extract day and month
+                    expiry_clean = self.expiry.replace('-', '').upper()
+                    # Find month in string
+                    for mon in ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']:
+                        if mon in expiry_clean:
+                            idx = expiry_clean.index(mon)
+                            day = expiry_clean[max(0, idx-2):idx]
+                            if not day or not day.isdigit():
+                                day = '01'
+                            expiry_formatted = f"{day.zfill(2)}{mon}"
+                            break
+                    else:
+                        expiry_formatted = '28AUG'  # Default
+            except Exception as e:
+                logger.error(f"Error parsing expiry: {e}")
+                expiry_formatted = '28AUG'
+        elif isinstance(self.expiry, datetime):
+            # Format datetime as DDMMM (no year in symbol)
+            expiry_formatted = self.expiry.strftime('%d%b').upper()
+        else:
+            # Default handling
+            expiry_formatted = '28AUG'
         
         # Remove decimal if whole number
         if strike == int(strike):
@@ -169,7 +208,13 @@ class OptionChainManager:
         else:
             strike_str = str(strike)
         
-        symbol = f"{self.underlying}{self.expiry}{strike_str}{option_type}"
+        # Construct symbol: BASE + EXPIRY + 25 + STRIKE + CE/PE
+        # The "25" is the year 2025, hardcoded for now
+        # Format: NIFTY28AUG2524800CE
+        symbol = f"{self.underlying}{expiry_formatted}25{strike_str}{option_type}"
+        
+        logger.debug(f"Generated symbol: {symbol} from expiry={self.expiry}, strike={strike}, type={option_type}")
+        
         return symbol
     
     def setup_depth_subscriptions(self):
@@ -182,17 +227,25 @@ class OptionChainManager:
             logger.warning("WebSocket manager not available for subscriptions")
             return
         
+        # IMPORTANT: Register handlers BEFORE subscribing
+        logger.info(f"Registering depth handler for {self.underlying} option chain")
+        self.websocket_manager.register_handler('depth', self.handle_depth_update)
+        
+        # Ensure WebSocket is authenticated before subscribing
+        if not self.websocket_manager.authenticated:
+            logger.warning(f"WebSocket not authenticated, skipping subscriptions for {self.underlying}")
+            return
+        
+        # Small delay to ensure WebSocket is ready
+        time.sleep(0.5)
+        
         # Subscribe to underlying in quote mode
         self.subscribe_underlying_quote()
         
-        # Subscribe to options in depth mode for bid/ask
-        for strike_data in self.option_data.values():
-            ce_symbol = strike_data['ce_symbol']
-            pe_symbol = strike_data['pe_symbol']
-            
-            # Depth subscription for market data
-            self.subscribe_option_depth(ce_symbol)
-            self.subscribe_option_depth(pe_symbol)
+        # Batch subscribe to all options in depth mode for efficiency
+        self.batch_subscribe_options()
+        
+        logger.info(f"Setup depth subscriptions for {self.underlying} option chain")
     
     def subscribe_underlying_quote(self):
         """Subscribe to underlying index in quote mode"""
@@ -214,17 +267,51 @@ class OptionChainManager:
             }
             self.websocket_manager.subscribe(subscription)
     
+    def batch_subscribe_options(self):
+        """Batch subscribe to all option strikes for efficiency"""
+        if not self.websocket_manager:
+            return
+        
+        # Build instruments list for batch subscription
+        instruments = []
+        for strike_data in self.option_data.values():
+            # Add CE strike
+            instruments.append({
+                'symbol': strike_data['ce_symbol'],
+                'exchange': 'NFO'
+            })
+            # Add PE strike
+            instruments.append({
+                'symbol': strike_data['pe_symbol'],
+                'exchange': 'NFO'
+            })
+        
+        # Subscribe in batches of 20 to avoid overwhelming the server
+        batch_size = 20
+        for i in range(0, len(instruments), batch_size):
+            batch = instruments[i:i + batch_size]
+            logger.info(f"Subscribing to batch of {len(batch)} option instruments")
+            
+            # Send batch subscription
+            self.websocket_manager.subscribe_batch(batch, mode='depth')
+            
+            # Minimal delay to prevent blocking
+            # Removed to allow Flask to start
+    
     def handle_depth_update(self, data):
         """
         Process incoming depth data for options
         Extract top-level bid/ask for order management
         """
         symbol = data.get('symbol')
+        logger.info(f"[OPTION_CHAIN] Received depth update for {symbol}, LTP={data.get('ltp')}")
         
         if symbol in self.subscription_map:
             strike_info = self.subscription_map[symbol]
             option_type = strike_info['type']  # 'CE' or 'PE'
             strike = strike_info['strike']
+            
+            logger.info(f"[OPTION_CHAIN] Updating {self.underlying} {strike} {option_type} with depth data")
             
             # Update with depth data
             bids = data.get('bids', [])

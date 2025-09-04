@@ -103,7 +103,7 @@ class ProfessionalWebSocketManager:
         self.connection_pool = {}
         self.max_connections = 10
         self.heartbeat_interval = 30
-        self.reconnect_attempts = 5
+        self.reconnect_attempts = 3  # Reduced for faster failover
         self.backoff_strategy = ExponentialBackoff(base=2, max_delay=60)
         self.account_failover_enabled = True
         self.data_processor = WebSocketDataProcessor()
@@ -186,8 +186,7 @@ class ProfessionalWebSocketManager:
             
             # Check if connection was immediately refused
             if self.connection_failed:
-                logger.warning("Connection immediately failed, triggering failover")
-                self.handle_connection_failure()
+                logger.warning("Connection immediately failed")
                 return False
             
             self.active = True
@@ -330,13 +329,33 @@ class ProfessionalWebSocketManager:
     
     def reconnect_with_backoff(self):
         """Reconnect with exponential backoff"""
+        connection_refused_count = 0
+        
         for attempt in range(self.reconnect_attempts):
             delay = self.backoff_strategy.get_next_delay()
             logger.info(f"Reconnection attempt {attempt + 1}/{self.reconnect_attempts} in {delay} seconds")
             time.sleep(delay)
             
             try:
-                if self.connect(self.ws_url, self.api_key):
+                # Reset the connection_failed flag before each attempt
+                self.connection_failed = False
+                
+                # First try to reconnect to the current account
+                current_account = self.connection_pool.get('current_account') if self.connection_pool else None
+                
+                # Use current account credentials if available, otherwise use stored ones
+                if current_account and hasattr(current_account, 'websocket_url'):
+                    ws_url = current_account.websocket_url
+                    api_key = current_account.get_api_key()
+                else:
+                    ws_url = self.ws_url
+                    api_key = self.api_key
+                
+                # Try to connect
+                connected = self.connect(ws_url, api_key)
+                
+                # Check if connection succeeded or was refused
+                if connected:
                     logger.info("Reconnection successful")
                     
                     # Resubscribe to all previous subscriptions
@@ -347,9 +366,24 @@ class ProfessionalWebSocketManager:
                             subscription = json.loads(sub_str)
                             self.subscribe(subscription)
                     return
+                else:
+                    # Check if connection was refused
+                    if self.connection_failed:
+                        connection_refused_count += 1
+                        logger.warning(f"Reconnection attempt {attempt + 1} failed - connection refused (count: {connection_refused_count})")
+                        
+                        # If connection is refused twice, immediately trigger failover
+                        if connection_refused_count >= 2:
+                            logger.error("Connection refused multiple times, immediately triggering failover")
+                            break
+                    else:
+                        logger.warning(f"Reconnection attempt {attempt + 1} failed - general failure")
+                    # Continue to next attempt
+                    
             except Exception as e:
-                logger.error(f"Reconnection attempt {attempt + 1} failed: {e}")
+                logger.error(f"Reconnection attempt {attempt + 1} failed with exception: {e}")
         
+        # All reconnection attempts failed, initiate failover
         logger.error(f"Max reconnection attempts ({self.reconnect_attempts}) reached, initiating failover")
         self.handle_connection_failure()
     
@@ -363,8 +397,12 @@ class ProfessionalWebSocketManager:
         backup_accounts = self.connection_pool.get('backup_accounts', [])
         
         if backup_accounts:
+            # Store the previous account name before updating
+            previous_account = self.connection_pool.get('current_account')
+            from_account_name = previous_account.account_name if previous_account and hasattr(previous_account, 'account_name') else 'Unknown'
+            
             next_account = backup_accounts[0]
-            logger.info(f"Switching to backup account: {next_account.account_name}")
+            logger.info(f"Switching from {from_account_name} to backup account: {next_account.account_name}")
             
             # Update connection pool
             self.connection_pool['current_account'] = next_account
@@ -372,27 +410,40 @@ class ProfessionalWebSocketManager:
             self.connection_pool['metrics']['account_switches'] += 1
             
             # Add failover event to history
-            current = self.connection_pool.get('current_account')
-            from_account_name = current.account_name if current and hasattr(current, 'account_name') else 'Unknown'
-            
             self.connection_pool['failover_history'].append({
                 'timestamp': datetime.now().isoformat(),
                 'from_account': from_account_name,
                 'to_account': next_account.account_name,
-                'reason': 'Connection failure'
+                'reason': 'Connection failure after max reconnection attempts'
             })
             
             # Connect with new account
             if hasattr(next_account, 'websocket_url') and hasattr(next_account, 'get_api_key'):
                 logger.info(f"Attempting to connect to backup WebSocket: {next_account.websocket_url}")
-                self.connect(next_account.websocket_url, next_account.get_api_key())
                 
-                # Resubscribe to all previous subscriptions
-                if self.subscriptions:
-                    logger.info(f"Resubscribing to {len(self.subscriptions)} symbols after failover")
-                    for sub_str in list(self.subscriptions):
-                        subscription = json.loads(sub_str)
-                        self.subscribe(subscription)
+                # Update stored credentials for future reconnection attempts
+                self.ws_url = next_account.websocket_url
+                self.api_key = next_account.get_api_key()
+                
+                # Reset connection_failed flag before attempting backup connection
+                self.connection_failed = False
+                
+                # Try to connect with the backup account
+                if self.connect(next_account.websocket_url, next_account.get_api_key()):
+                    logger.info(f"Successfully connected to backup account: {next_account.account_name}")
+                    
+                    # Resubscribe to all previous subscriptions
+                    if self.subscriptions:
+                        logger.info(f"Resubscribing to {len(self.subscriptions)} symbols after failover")
+                        time.sleep(1)  # Wait for authentication
+                        for sub_str in list(self.subscriptions):
+                            subscription = json.loads(sub_str)
+                            self.subscribe(subscription)
+                else:
+                    logger.error(f"Failed to connect to backup account: {next_account.account_name}")
+                    # Try next backup if available
+                    if self.connection_pool.get('backup_accounts'):
+                        self.attempt_account_failover()
             else:
                 logger.error(f"Backup account missing required attributes: websocket_url or get_api_key")
         else:

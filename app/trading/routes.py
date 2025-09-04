@@ -1,7 +1,8 @@
 from flask import render_template, request, jsonify, current_app, Response, flash, redirect, url_for
 from flask_login import login_required, current_user
+from app import db
 from app.trading import trading_bp
-from app.models import TradingAccount
+from app.models import TradingAccount, TradingHoursTemplate, TradingSession, MarketHoliday, SpecialTradingSession
 from app.utils.openalgo_client import ExtendedOpenAlgoAPI
 from app.utils.option_chain import OptionChainManager
 from app.utils.websocket_manager import ProfessionalWebSocketManager

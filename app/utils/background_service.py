@@ -5,14 +5,16 @@ Automatically starts option chains when primary account connects
 
 import threading
 import logging
-from datetime import datetime, time
+from datetime import datetime, time, timedelta, date
 import time as time_module
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+from flask import current_app
+from sqlalchemy import and_
 
-from app.models import TradingAccount, TradingHoursTemplate, TradingSession, MarketHoliday
+from app.models import TradingAccount, TradingHoursTemplate, TradingSession, MarketHoliday, SpecialTradingSession
 from app.utils.option_chain import OptionChainManager
 from app.utils.websocket_manager import ProfessionalWebSocketManager
 from app.utils.openalgo_client import ExtendedOpenAlgoAPI
@@ -48,6 +50,10 @@ class OptionChainBackgroundService:
         self.primary_account = None
         self.backup_accounts = []
         self._initialized = True
+        self.cached_holidays = {}  # Cache holidays to avoid DB queries
+        self.cached_sessions = {}  # Cache trading sessions
+        self.cached_special_sessions = {}  # Cache special sessions
+        self.cache_refresh_time = None
         
         logger.info("Option Chain Background Service initialized")
     
@@ -338,21 +344,35 @@ class OptionChainBackgroundService:
             self.stop_option_chain(underlying)
     
     def schedule_market_hours(self):
-        """Schedule option chains based on trading hours"""
+        """Schedule option chains based on trading hours template"""
         try:
-            # Default NSE trading hours if no template exists
-            # Monday-Friday: 9:15 AM to 3:30 PM IST
-            for day in range(5):  # 0=Monday to 4=Friday
-                # Schedule market open
+            # Refresh cache of trading hours
+            self.refresh_trading_hours_cache()
+            
+            # Get trading sessions from database or use defaults
+            sessions = self.get_trading_sessions()
+            
+            for session in sessions:
+                if not session.get('is_active'):
+                    continue
+                    
+                day = session['day_of_week']
+                start_time = session['start_time']
+                end_time = session['end_time']
+                
+                # Schedule WebSocket start 15 minutes before market open
+                pre_market_time = (datetime.combine(date.today(), start_time) - timedelta(minutes=15)).time()
+                
+                # Schedule pre-market WebSocket start
                 self.scheduler.add_job(
-                    func=self.on_market_open,
+                    func=self.on_pre_market_open,
                     trigger=CronTrigger(
                         day_of_week=day,
-                        hour=9,
-                        minute=15,
+                        hour=pre_market_time.hour,
+                        minute=pre_market_time.minute,
                         timezone=pytz.timezone('Asia/Kolkata')
                     ),
-                    id=f"market_open_{day}",
+                    id=f"pre_market_open_{day}",
                     replace_existing=True
                 )
                 
@@ -361,28 +381,58 @@ class OptionChainBackgroundService:
                     func=self.on_market_close,
                     trigger=CronTrigger(
                         day_of_week=day,
-                        hour=15,
-                        minute=30,
+                        hour=end_time.hour,
+                        minute=end_time.minute,
                         timezone=pytz.timezone('Asia/Kolkata')
                     ),
                     id=f"market_close_{day}",
                     replace_existing=True
                 )
+                
+                logger.info(f"Scheduled {['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][day]}: "
+                          f"WebSocket {pre_market_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')} "
+                          f"(Market {start_time.strftime('%H:%M')} - {end_time.strftime('%H:%M')})") 
             
-            logger.info("Market hours scheduled with default NSE timings")
+            # Schedule special sessions
+            self.schedule_special_sessions()
+            
+            # Schedule cache refresh daily at 5 AM
+            self.scheduler.add_job(
+                func=self.refresh_trading_hours_cache,
+                trigger=CronTrigger(
+                    hour=5,
+                    minute=0,
+                    timezone=pytz.timezone('Asia/Kolkata')
+                ),
+                id="refresh_cache",
+                replace_existing=True
+            )
+            
+            logger.info("Market hours scheduled from trading template")
             
         except Exception as e:
             logger.error(f"Error scheduling market hours: {e}")
+            # Fallback to default NSE hours
+            self.schedule_default_hours()
     
-    def on_market_open(self):
-        """Called when market opens"""
-        logger.info("Market opened - starting option chains")
+    def on_pre_market_open(self):
+        """Called 15 minutes before market opens for WebSocket initialization"""
+        now = datetime.now(pytz.timezone('Asia/Kolkata'))
+        logger.info(f"Pre-market WebSocket start at {now.strftime('%H:%M:%S')} - Starting option chains")
         
         if self.primary_account:
             if not self.is_holiday():
+                # Start WebSocket connections 15 minutes early
                 self.start_option_chain('NIFTY')
                 self.start_option_chain('BANKNIFTY')
                 self.start_option_chain('SENSEX')
+                logger.info("Option chains WebSocket started in pre-market session")
+            else:
+                logger.info("Market holiday - WebSocket not started")
+    
+    def on_market_open(self):
+        """Called when market opens (legacy, kept for compatibility)"""
+        logger.info("Market opened - option chains should already be running from pre-market")
     
     def on_market_close(self):
         """Called when market closes"""
@@ -390,7 +440,7 @@ class OptionChainBackgroundService:
         self.stop_all_option_chains()
     
     def is_trading_hours(self) -> bool:
-        """Check if current time is within trading hours"""
+        """Check if current time is within trading hours (including 15-min pre-market)"""
         try:
             now = datetime.now(pytz.timezone('Asia/Kolkata'))
             current_day = now.weekday()
@@ -402,13 +452,19 @@ class OptionChainBackgroundService:
                 return True
             
             # Check if holiday (skip if special session already checked)
-            if self.is_holiday():
+            if self.is_holiday(current_date):
                 return False
             
-            # Default NSE hours (9:15 AM to 3:30 PM, Monday-Friday)
-            if current_day >= 5:  # Saturday or Sunday
-                return False
-            return time(9, 15) <= current_time <= time(15, 30)
+            # Get trading sessions for current day
+            sessions = self.get_trading_sessions()
+            for session in sessions:
+                if session['day_of_week'] == current_day and session['is_active']:
+                    # Include 15-minute pre-market buffer for WebSocket
+                    pre_market_time = (datetime.combine(date.today(), session['start_time']) - timedelta(minutes=15)).time()
+                    if pre_market_time <= current_time <= session['end_time']:
+                        return True
+            
+            return False
             
         except Exception as e:
             logger.error(f"Error checking trading hours: {e}")
@@ -417,24 +473,37 @@ class OptionChainBackgroundService:
     def has_special_session(self, check_date, check_time) -> bool:
         """Check if there's a special trading session at the given date and time"""
         try:
-            # Import here to avoid circular imports
-            from app.models import SpecialTradingSession
-            from app import db
+            # Use cached special sessions
+            if check_date not in self.cached_special_sessions:
+                return False
             
-            # This would normally require app context
-            # For now, return False as we can't query without context
-            # In production, you'd cache special sessions or use a different approach
+            for session in self.cached_special_sessions.get(check_date, []):
+                # Include 15-minute pre-market buffer
+                pre_market_time = (datetime.combine(check_date, session['start_time']) - timedelta(minutes=15)).time()
+                if pre_market_time <= check_time <= session['end_time']:
+                    logger.info(f"Special trading session active: {session['session_name']}")
+                    return True
+            
             return False
             
         except Exception as e:
             logger.debug(f"Could not check special sessions: {e}")
             return False
     
-    def is_holiday(self) -> bool:
-        """Check if today is a market holiday"""
+    def is_holiday(self, check_date: Optional[date] = None) -> bool:
+        """Check if given date is a market holiday"""
         try:
-            # For now, return False (no holiday checking without database context)
-            # This can be enhanced later with proper app context handling
+            if check_date is None:
+                check_date = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+            
+            # Use cached holidays
+            if check_date in self.cached_holidays:
+                holiday_info = self.cached_holidays[check_date]
+                # Check if it's a holiday without special session
+                if not holiday_info.get('is_special_session', False):
+                    logger.info(f"Market holiday: {holiday_info.get('holiday_name', 'Unknown')}")
+                    return True
+            
             return False
             
         except Exception as e:
@@ -455,6 +524,181 @@ class OptionChainBackgroundService:
                 for underlying, ws in self.websocket_managers.items()
             }
         }
+    
+    def refresh_trading_hours_cache(self):
+        """Refresh cached trading hours, holidays, and special sessions"""
+        try:
+            # This method will be called within Flask app context
+            logger.info("Refreshing trading hours cache")
+            
+            # Cache holidays for the current year
+            now = datetime.now(pytz.timezone('Asia/Kolkata'))
+            year_start = date(now.year, 1, 1)
+            year_end = date(now.year, 12, 31)
+            
+            # Note: These queries will only work within Flask app context
+            # They'll be called from Flask routes or scheduled jobs with context
+            try:
+                from app import create_app, db
+                from app.models import MarketHoliday, SpecialTradingSession, TradingSession
+                
+                app = create_app()
+                with app.app_context():
+                    # Cache holidays
+                    holidays = MarketHoliday.query.filter(
+                        and_(
+                            MarketHoliday.holiday_date >= year_start,
+                            MarketHoliday.holiday_date <= year_end
+                        )
+                    ).all()
+                    
+                    self.cached_holidays = {}
+                    for holiday in holidays:
+                        self.cached_holidays[holiday.holiday_date] = {
+                            'holiday_name': holiday.holiday_name,
+                            'market': holiday.market,
+                            'is_special_session': holiday.is_special_session
+                        }
+                    
+                    # Cache special sessions
+                    special_sessions = SpecialTradingSession.query.filter(
+                        and_(
+                            SpecialTradingSession.session_date >= year_start,
+                            SpecialTradingSession.session_date <= year_end,
+                            SpecialTradingSession.is_active == True
+                        )
+                    ).all()
+                    
+                    self.cached_special_sessions = {}
+                    for session in special_sessions:
+                        if session.session_date not in self.cached_special_sessions:
+                            self.cached_special_sessions[session.session_date] = []
+                        self.cached_special_sessions[session.session_date].append({
+                            'session_name': session.session_name,
+                            'start_time': session.start_time,
+                            'end_time': session.end_time,
+                            'market': session.market
+                        })
+                    
+                    # Cache regular trading sessions
+                    sessions = TradingSession.query.filter_by(is_active=True).all()
+                    self.cached_sessions = []
+                    for session in sessions:
+                        self.cached_sessions.append({
+                            'day_of_week': session.day_of_week,
+                            'start_time': session.start_time,
+                            'end_time': session.end_time,
+                            'is_active': session.is_active
+                        })
+                    
+                    self.cache_refresh_time = datetime.now(pytz.timezone('Asia/Kolkata'))
+                    logger.info(f"Cache refreshed: {len(self.cached_holidays)} holidays, "
+                              f"{len(self.cached_special_sessions)} special session dates, "
+                              f"{len(self.cached_sessions)} regular sessions")
+                              
+            except Exception as e:
+                logger.warning(f"Could not refresh cache from database: {e}")
+                # Use default cache if database not available
+                self.set_default_cache()
+                
+        except Exception as e:
+            logger.error(f"Error refreshing trading hours cache: {e}")
+            self.set_default_cache()
+    
+    def set_default_cache(self):
+        """Set default NSE trading hours if database not available"""
+        logger.info("Using default NSE trading hours")
+        self.cached_sessions = [
+            {'day_of_week': i, 'start_time': time(9, 15), 'end_time': time(15, 30), 'is_active': True}
+            for i in range(5)  # Monday to Friday
+        ]
+        self.cached_holidays = {}
+        self.cached_special_sessions = {}
+    
+    def get_trading_sessions(self) -> List[Dict]:
+        """Get trading sessions from cache or defaults"""
+        if not self.cached_sessions:
+            self.set_default_cache()
+        return self.cached_sessions
+    
+    def schedule_special_sessions(self):
+        """Schedule jobs for special trading sessions"""
+        try:
+            for session_date, sessions in self.cached_special_sessions.items():
+                for session in sessions:
+                    # Schedule pre-market start (15 minutes before)
+                    pre_market_time = (datetime.combine(session_date, session['start_time']) - timedelta(minutes=15))
+                    
+                    if pre_market_time > datetime.now(pytz.timezone('Asia/Kolkata')):
+                        self.scheduler.add_job(
+                            func=self.on_special_session_start,
+                            trigger='date',
+                            run_date=pre_market_time,
+                            timezone=pytz.timezone('Asia/Kolkata'),
+                            id=f"special_start_{session_date}_{session['session_name']}",
+                            replace_existing=True,
+                            args=[session['session_name']]
+                        )
+                        
+                        # Schedule session end
+                        end_time = datetime.combine(session_date, session['end_time'])
+                        self.scheduler.add_job(
+                            func=self.on_special_session_end,
+                            trigger='date',
+                            run_date=end_time,
+                            timezone=pytz.timezone('Asia/Kolkata'),
+                            id=f"special_end_{session_date}_{session['session_name']}",
+                            replace_existing=True,
+                            args=[session['session_name']]
+                        )
+                        
+                        logger.info(f"Scheduled special session: {session['session_name']} on {session_date}")
+                        
+        except Exception as e:
+            logger.error(f"Error scheduling special sessions: {e}")
+    
+    def on_special_session_start(self, session_name: str):
+        """Called when a special trading session starts"""
+        logger.info(f"Special session started: {session_name}")
+        if self.primary_account:
+            self.start_option_chain('NIFTY')
+            self.start_option_chain('BANKNIFTY')
+            self.start_option_chain('SENSEX')
+    
+    def on_special_session_end(self, session_name: str):
+        """Called when a special trading session ends"""
+        logger.info(f"Special session ended: {session_name}")
+        self.stop_all_option_chains()
+    
+    def schedule_default_hours(self):
+        """Fallback to schedule default NSE hours"""
+        logger.info("Scheduling default NSE hours as fallback")
+        for day in range(5):  # Monday to Friday
+            # Schedule pre-market start (9:00 AM - 15 minutes before market)
+            self.scheduler.add_job(
+                func=self.on_pre_market_open,
+                trigger=CronTrigger(
+                    day_of_week=day,
+                    hour=9,
+                    minute=0,
+                    timezone=pytz.timezone('Asia/Kolkata')
+                ),
+                id=f"pre_market_open_{day}",
+                replace_existing=True
+            )
+            
+            # Schedule market close (3:30 PM)
+            self.scheduler.add_job(
+                func=self.on_market_close,
+                trigger=CronTrigger(
+                    day_of_week=day,
+                    hour=15,
+                    minute=30,
+                    timezone=pytz.timezone('Asia/Kolkata')
+                ),
+                id=f"market_close_{day}",
+                replace_existing=True
+            )
 
 
 # Global service instance

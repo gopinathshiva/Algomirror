@@ -1,34 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)",
-      "Bash(pip install:*)",
-      "Bash(curl:*)",
-      "Bash(npm install)",
-      "Bash(npm run build-css:*)",
-      "Bash(npx tailwindcss:*)",
-      "Bash(taskkill:*)",
-      "Bash(del create_favicons.py)",
-      "Bash(del instancealgomirror.db)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\templates\\trading/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\trading/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)",
-      "Read(/D:\\openalgo-multi\\Algomirror\\app\\utils/**)"
+      "Bash(\"D:\\openalgo-multi\\algomirror\\venv\\Scripts\\python.exe\" -c \"from pathlib import Path; print(''sqlite:///'' + str(Path(''D:/openalgo-multi/algomirror/instance/algomirror.db'').as_posix()))\")"
     ],
     "deny": [],
     "ask": []

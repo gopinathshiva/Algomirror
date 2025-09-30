@@ -152,10 +152,18 @@
                 </div>
 
                 <!-- Tabs -->
-                <div class="tabs tabs-boxed mb-4">
-                    <a class="tab tab-active" onclick="showStrategyTab('orderbook', this)">Orderbook</a>
-                    <a class="tab" onclick="showStrategyTab('tradebook', this)">Tradebook</a>
-                    <a class="tab" onclick="showStrategyTab('positions', this)">Positions</a>
+                <div class="border-b border-base-300 mb-4">
+                    <div class="flex space-x-2">
+                        <button type="button" class="px-6 py-3 font-semibold border-b-2 border-primary text-primary" id="tab-orderbook" onclick="showStrategyTab('orderbook', this)">
+                            Orderbook
+                        </button>
+                        <button type="button" class="px-6 py-3 font-semibold border-b-2 border-transparent text-base-content/60 hover:text-base-content hover:border-base-300" id="tab-tradebook" onclick="showStrategyTab('tradebook', this)">
+                            Tradebook
+                        </button>
+                        <button type="button" class="px-6 py-3 font-semibold border-b-2 border-transparent text-base-content/60 hover:text-base-content hover:border-base-300" id="tab-positions" onclick="showStrategyTab('positions', this)">
+                            Positions
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Orderbook Tab -->
@@ -813,14 +821,18 @@ function showStrategyTab(tabName, element) {
         tab.classList.add('hidden');
     });
 
-    // Remove active from all tab buttons
-    document.querySelectorAll('.tabs .tab').forEach(tab => {
-        tab.classList.remove('tab-active');
+    // Remove active styling from all tab buttons
+    document.querySelectorAll('[id^="tab-"]').forEach(tab => {
+        tab.classList.remove('border-primary', 'text-primary');
+        tab.classList.add('border-transparent', 'text-base-content/60');
     });
+
+    // Add active styling to clicked tab
+    element.classList.remove('border-transparent', 'text-base-content/60');
+    element.classList.add('border-primary', 'text-primary');
 
     // Show selected tab
     document.getElementById(tabName + '-tab').classList.remove('hidden');
-    element.classList.add('tab-active');
 }
 
 function loadStrategyData() {

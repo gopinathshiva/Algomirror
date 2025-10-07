@@ -381,6 +381,8 @@ def strategy_orderbook(strategy_id):
                 order_status = 'open'
 
         orders.append({
+            'account_name': execution.account.account_name if execution.account else 'N/A',
+            'broker_name': execution.account.broker_name if execution.account else 'N/A',
             'action': execution.leg.action,
             'symbol': execution.symbol,
             'exchange': execution.exchange,
@@ -436,6 +438,8 @@ def strategy_tradebook(strategy_id):
         trade_value = avg_price * trade.quantity
 
         data.append({
+            'account_name': trade.account.account_name if trade.account else 'N/A',
+            'broker_name': trade.account.broker_name if trade.account else 'N/A',
             'action': trade.leg.action,
             'symbol': trade.symbol,
             'exchange': trade.exchange,
@@ -497,6 +501,8 @@ def strategy_positions(strategy_id):
         position.unrealized_pnl = pnl
 
         data.append({
+            'account_name': position.account.account_name if position.account else 'N/A',
+            'broker_name': position.account.broker_name if position.account else 'N/A',
             'symbol': position.symbol,
             'exchange': position.exchange,
             'product': position.leg.product_type.upper() if position.leg.product_type else 'MIS',

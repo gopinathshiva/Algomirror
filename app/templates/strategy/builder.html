@@ -173,6 +173,7 @@
                         <table class="table table-compact">
                             <thead>
                                 <tr>
+                                    <th>Account</th>
                                     <th>Order ID</th>
                                     <th>Symbol</th>
                                     <th>Exchange</th>
@@ -186,7 +187,7 @@
                             </thead>
                             <tbody id="orderbook-body">
                                 <tr>
-                                    <td colspan="9" class="text-center text-base-content/60">Loading...</td>
+                                    <td colspan="10" class="text-center text-base-content/60">Loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -199,6 +200,7 @@
                         <table class="table table-compact">
                             <thead>
                                 <tr>
+                                    <th>Account</th>
                                     <th>Order ID</th>
                                     <th>Symbol</th>
                                     <th>Exchange</th>
@@ -211,7 +213,7 @@
                             </thead>
                             <tbody id="tradebook-body">
                                 <tr>
-                                    <td colspan="10" class="text-center text-base-content/60">Loading...</td>
+                                    <td colspan="9" class="text-center text-base-content/60">Loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -230,6 +232,7 @@
                         <table class="table table-compact">
                             <thead>
                                 <tr>
+                                    <th>Account</th>
                                     <th>Symbol</th>
                                     <th>Exchange</th>
                                     <th>Product</th>
@@ -868,7 +871,7 @@ async function loadOrderbook(strategyId) {
             const stats = data.data.statistics || {};
 
             if (orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-base-content/60">No orders found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center text-base-content/60">No orders found</td></tr>';
             } else {
                 orders.forEach(order => {
                     const row = tbody.insertRow();
@@ -876,6 +879,7 @@ async function loadOrderbook(strategyId) {
                                       order.order_status === 'rejected' ? 'badge-error' :
                                       order.order_status === 'open' ? 'badge-warning' : 'badge-outline';
                     row.innerHTML = `
+                        <td><span class="badge badge-outline badge-sm">${order.account_name || 'N/A'}</span></td>
                         <td class="text-xs">${order.orderid || '-'}</td>
                         <td>${order.symbol}</td>
                         <td>${order.exchange}</td>
@@ -937,13 +941,14 @@ async function loadTradebook(strategyId) {
             const trades = data.data || [];
 
             if (trades.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/60">No trades found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-base-content/60">No trades found</td></tr>';
             } else {
                 let totalTradeValue = 0;
                 trades.forEach(trade => {
                     totalTradeValue += trade.trade_value || 0;
                     const row = tbody.insertRow();
                     row.innerHTML = `
+                        <td><span class="badge badge-outline badge-sm">${trade.account_name || 'N/A'}</span></td>
                         <td class="text-xs">${trade.orderid || '-'}</td>
                         <td>${trade.symbol}</td>
                         <td>${trade.exchange}</td>
@@ -979,7 +984,7 @@ async function loadPositions(strategyId) {
             const positions = data.data || [];
 
             if (positions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-base-content/60">No open positions</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" class="text-center text-base-content/60">No open positions</td></tr>';
             } else {
                 let totalPnl = 0;
                 positions.forEach(position => {
@@ -989,6 +994,7 @@ async function loadPositions(strategyId) {
                     const qty = parseInt(position.quantity) || 0;
                     const action = qty < 0 ? 'SELL' : 'BUY';
                     row.innerHTML = `
+                        <td><span class="badge badge-outline badge-sm">${position.account_name || 'N/A'}</span></td>
                         <td>${position.symbol}</td>
                         <td>${position.exchange}</td>
                         <td>${position.product}</td>

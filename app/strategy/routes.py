@@ -326,36 +326,143 @@ def exit_strategy(strategy_id):
 @strategy_bp.route('/delete/<int:strategy_id>', methods=['DELETE'])
 @login_required
 def delete_strategy(strategy_id):
-    """Delete a strategy"""
+    """Delete a strategy with optional force deletion"""
     try:
+        from flask import request
+
         strategy = Strategy.query.filter_by(
             id=strategy_id,
             user_id=current_user.id
         ).first_or_404()
 
+        # Check if force deletion is requested
+        force_delete = request.args.get('force', 'false').lower() == 'true'
+
         # Check for active positions
         active_executions = StrategyExecution.query.filter_by(
             strategy_id=strategy_id,
             status='entered'
-        ).count()
+        ).all()
 
-        if active_executions > 0:
+        # Get all executions (for cleanup on force delete)
+        all_executions = StrategyExecution.query.filter_by(
+            strategy_id=strategy_id
+        ).all()
+
+        if active_executions and not force_delete:
+            # Return warning with details
+            execution_details = []
+            for exec in active_executions[:5]:  # Show first 5
+                execution_details.append({
+                    'symbol': exec.symbol,
+                    'quantity': exec.quantity,
+                    'entry_price': exec.entry_price,
+                    'unrealized_pnl': exec.unrealized_pnl or 0,
+                    'account': exec.account.account_name if exec.account else 'N/A'
+                })
+
             return jsonify({
-                'status': 'error',
-                'message': 'Cannot delete strategy with active positions'
-            }), 400
+                'status': 'warning',
+                'message': f'Strategy has {len(active_executions)} open position(s)',
+                'active_positions': len(active_executions),
+                'total_executions': len(all_executions),
+                'execution_details': execution_details,
+                'can_force_delete': True,
+                'warning_message': 'This will delete the strategy AND all execution records (including open positions). Use force delete if positions are expired or manually closed.'
+            }), 409  # Conflict status code
 
+        # Perform deletion
+        if force_delete and active_executions:
+            logger.warning(f"Force deleting strategy {strategy_id} ({strategy.name}) with {len(active_executions)} open positions")
+
+        # Delete all executions first (cascade should handle this, but explicit is better)
+        deleted_executions = 0
+        for execution in all_executions:
+            db.session.delete(execution)
+            deleted_executions += 1
+
+        # Delete strategy legs
+        deleted_legs = 0
+        for leg in strategy.legs:
+            db.session.delete(leg)
+            deleted_legs += 1
+
+        # Delete strategy itself
         db.session.delete(strategy)
         db.session.commit()
 
+        message = f'Strategy deleted successfully'
+        if force_delete and active_executions:
+            message = f'Strategy force deleted: Removed {deleted_executions} execution(s) and {deleted_legs} leg(s) (including {len(active_executions)} open position(s))'
+        elif deleted_executions > 0:
+            message = f'Strategy deleted: Removed {deleted_executions} execution record(s) and {deleted_legs} leg(s)'
+
         return jsonify({
             'status': 'success',
-            'message': 'Strategy deleted successfully'
+            'message': message,
+            'deleted_executions': deleted_executions,
+            'deleted_legs': deleted_legs,
+            'force_deleted': force_delete
         })
 
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error deleting strategy {strategy_id}: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+@strategy_bp.route('/cleanup-expired', methods=['POST'])
+@login_required
+def cleanup_expired_executions():
+    """Cleanup executions for expired contracts (admin utility)"""
+    try:
+        from datetime import datetime, timedelta
+
+        # Get strategies with executions older than 7 days
+        cutoff_date = datetime.utcnow() - timedelta(days=7)
+
+        old_executions = StrategyExecution.query.join(Strategy).filter(
+            Strategy.user_id == current_user.id,
+            StrategyExecution.created_at < cutoff_date,
+            StrategyExecution.status == 'entered'  # Still marked as open
+        ).all()
+
+        if not old_executions:
+            return jsonify({
+                'status': 'info',
+                'message': 'No expired executions found',
+                'cleaned': 0
+            })
+
+        # Group by strategy
+        strategies_affected = {}
+        for exec in old_executions:
+            if exec.strategy_id not in strategies_affected:
+                strategies_affected[exec.strategy_id] = {
+                    'name': exec.strategy.name,
+                    'count': 0,
+                    'executions': []
+                }
+            strategies_affected[exec.strategy_id]['count'] += 1
+            strategies_affected[exec.strategy_id]['executions'].append({
+                'symbol': exec.symbol,
+                'created_at': exec.created_at.isoformat(),
+                'days_old': (datetime.utcnow() - exec.created_at).days
+            })
+
+        return jsonify({
+            'status': 'info',
+            'message': f'Found {len(old_executions)} expired execution(s) across {len(strategies_affected)} strategy(ies)',
+            'total_expired': len(old_executions),
+            'strategies_affected': strategies_affected,
+            'can_cleanup': True,
+            'note': 'Use force delete on each strategy to cleanup'
+        })
+
+    except Exception as e:
+        logger.error(f"Error checking expired executions: {e}")
         return jsonify({
             'status': 'error',
             'message': str(e)

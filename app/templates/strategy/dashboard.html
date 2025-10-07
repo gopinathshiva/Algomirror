@@ -28,7 +28,7 @@
     <!-- Account Cards Grid -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         {% for account in accounts %}
-        <div class="card bg-base-100 shadow-lg">
+        <div class="card bg-base-100 shadow-lg" id="account-card-{{ account.id }}">
             <div class="card-body">
                 <div class="flex justify-between items-start mb-2">
                     <div>
@@ -41,11 +41,15 @@
                 <div class="space-y-2">
                     <div class="flex justify-between">
                         <span class="text-sm">Available:</span>
-                        <span class="font-semibold">₹590.52</span>
+                        <span class="font-semibold" id="available-{{ account.id }}">
+                            <span class="loading loading-spinner loading-xs"></span>
+                        </span>
                     </div>
                     <div class="flex justify-between">
-                        <span class="text-sm">Margin:</span>
-                        <span class="font-semibold">₹0.00</span>
+                        <span class="text-sm">Used Margin:</span>
+                        <span class="font-semibold" id="margin-{{ account.id }}">
+                            <span class="loading loading-spinner loading-xs"></span>
+                        </span>
                     </div>
 
                     <!-- Today's Trade Toggle -->
@@ -57,14 +61,16 @@
                     <!-- Active Strategies -->
                     <div class="pt-2">
                         <p class="text-sm text-base-content/60">Active Strategies</p>
-                        <p class="text-center py-2 text-sm text-base-content/50">No active strategies</p>
+                        <p class="text-center py-2 text-sm text-base-content/50" id="active-strat-{{ account.id }}">0</p>
                     </div>
                 </div>
 
                 <!-- Today's P&L -->
                 <div class="flex justify-between items-center pt-3 border-t">
                     <span class="text-sm">Today's P&L</span>
-                    <span class="font-bold text-success">+₹{{ today_pnl|round(2) }}</span>
+                    <span class="font-bold" id="pnl-account-{{ account.id }}">
+                        <span class="loading loading-spinner loading-xs"></span>
+                    </span>
                 </div>
             </div>
         </div>
@@ -278,12 +284,113 @@ async function closePositions(strategyId) {
     }
 }
 
+// Load account funds data
+async function loadAccountFunds() {
+    const accounts = {{ accounts_json|tojson }};
+
+    for (const account of accounts) {
+        try {
+            const response = await fetch(`/api/accounts/${account.id}/funds`);
+            const data = await response.json();
+
+            if (data.status === 'success' && data.data) {
+                const funds = data.data;
+
+                // Update available cash
+                const availableEl = document.getElementById(`available-${account.id}`);
+                if (availableEl) {
+                    const available = parseFloat(funds.availablecash) || 0;
+                    availableEl.textContent = `₹${available.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                }
+
+                // Update used margin (utiliseddebits from OpenAlgo)
+                const marginEl = document.getElementById(`margin-${account.id}`);
+                if (marginEl) {
+                    // Try utiliseddebits first (OpenAlgo format), fallback to used_margin
+                    const margin = parseFloat(funds.utiliseddebits || funds.used_margin) || 0;
+                    marginEl.textContent = `₹${margin.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                }
+            } else {
+                // Show error or fallback
+                const availableEl = document.getElementById(`available-${account.id}`);
+                const marginEl = document.getElementById(`margin-${account.id}`);
+
+                if (availableEl) availableEl.textContent = '₹0.00';
+                if (marginEl) marginEl.textContent = '₹0.00';
+            }
+        } catch (error) {
+            console.error(`Error loading funds for account ${account.id}:`, error);
+
+            // Show error state
+            const availableEl = document.getElementById(`available-${account.id}`);
+            const marginEl = document.getElementById(`margin-${account.id}`);
+
+            if (availableEl) availableEl.textContent = 'Error';
+            if (marginEl) marginEl.textContent = 'Error';
+        }
+    }
+}
+
+// Load account P&L data (realized + unrealized)
+async function loadAccountPnL() {
+    const accounts = {{ accounts_json|tojson }};
+
+    for (const account of accounts) {
+        try {
+            const response = await fetch(`/api/accounts/${account.id}/pnl`);
+            const data = await response.json();
+
+            if (data.status === 'success' && data.data) {
+                const pnlData = data.data;
+                const totalPnl = parseFloat(pnlData.total_pnl) || 0;
+
+                // Update P&L display
+                const pnlEl = document.getElementById(`pnl-account-${account.id}`);
+                if (pnlEl) {
+                    const sign = totalPnl >= 0 ? '+' : '';
+                    const colorClass = totalPnl >= 0 ? 'text-success' : 'text-error';
+                    pnlEl.textContent = `${sign}₹${totalPnl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                    pnlEl.className = `font-bold ${colorClass}`;
+                }
+
+                // Update active strategies count if we have open positions
+                const activeStratEl = document.getElementById(`active-strat-${account.id}`);
+                if (activeStratEl && pnlData.open_positions) {
+                    activeStratEl.textContent = `${pnlData.open_positions} open position${pnlData.open_positions !== 1 ? 's' : ''}`;
+                    activeStratEl.classList.remove('text-base-content/50');
+                    activeStratEl.classList.add('text-warning', 'font-semibold');
+                }
+            } else {
+                // Show zero P&L if no data
+                const pnlEl = document.getElementById(`pnl-account-${account.id}`);
+                if (pnlEl) {
+                    pnlEl.textContent = '₹0.00';
+                    pnlEl.className = 'font-bold text-base-content/60';
+                }
+            }
+        } catch (error) {
+            console.error(`Error loading P&L for account ${account.id}:`, error);
+
+            // Show error state
+            const pnlEl = document.getElementById(`pnl-account-${account.id}`);
+            if (pnlEl) {
+                pnlEl.textContent = 'Error';
+                pnlEl.className = 'font-bold text-error';
+            }
+        }
+    }
+}
+
 // Load metrics on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadStrategyMetrics();
+    loadAccountFunds();
+    loadAccountPnL();
 
-    // Auto-refresh every 10 seconds
-    setInterval(loadStrategyMetrics, 10000);
+    // Auto-refresh intervals
+    setInterval(loadStrategyMetrics, 10000);  // Strategy metrics every 10 seconds
+    setInterval(loadAccountFunds, 30000);     // Funds every 30 seconds
+    setInterval(loadAccountPnL, 5000);        // P&L every 5 seconds (real-time)
 });
 
 // Toggle Strategy Active Status

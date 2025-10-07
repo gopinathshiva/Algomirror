@@ -55,10 +55,22 @@ def dashboard():
             'trailing_sl': strategy.trailing_sl
         })
 
+    # Convert accounts to dictionaries for JSON serialization
+    accounts_data = []
+    for account in accounts:
+        accounts_data.append({
+            'id': account.id,
+            'account_name': account.account_name,
+            'broker_name': account.broker_name,
+            'is_primary': account.is_primary,
+            'connection_status': account.connection_status
+        })
+
     return render_template('strategy/dashboard.html',
                          strategies=strategies,
                          strategies_json=strategies_data,
                          accounts=accounts,
+                         accounts_json=accounts_data,
                          today_pnl=today_pnl,
                          active_strategies=len(active_strategies))
 

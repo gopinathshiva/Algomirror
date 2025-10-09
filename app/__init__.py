@@ -232,6 +232,7 @@ def create_app(config_name=None):
             
             # Check if within trading hours and trigger option chains
             if primary.connection_status == 'connected':
+                app.logger.info(f"Testing authentication for primary account: {primary.account_name}")
                 try:
                     # Test API connection before starting option chains
                     from app.utils.openalgo_client import ExtendedOpenAlgoAPI
@@ -240,18 +241,27 @@ def create_app(config_name=None):
                         host=primary.host_url
                     )
                     # Quick ping test
+                    app.logger.info(f"Sending ping to {primary.host_url}")
                     ping_response = test_client.ping()
+                    app.logger.info(f"Ping response: {ping_response}")
+
                     if ping_response.get('status') == 'success':
+                        app.logger.info(f"Authentication successful, starting option chains")
                         option_chain_service.on_primary_account_connected(primary)
                     else:
                         # Authentication failed - update connection status
-                        app.logger.warning(f"Primary account {primary.account_name} failed authentication, marking as disconnected")
+                        app.logger.warning(f"Primary account {primary.account_name} authentication failed: {ping_response.get('message', 'Unknown error')}")
+                        app.logger.warning(f"Marking {primary.account_name} as disconnected")
                         primary.connection_status = 'disconnected'
                         db.session.commit()
+                        app.logger.info(f"Account {primary.account_name} marked as disconnected")
                 except Exception as e:
-                    app.logger.error(f"Error testing primary account connection: {e}")
+                    app.logger.error(f"Error testing primary account connection: {e}", exc_info=True)
+                    app.logger.warning(f"Marking {primary.account_name} as disconnected due to error")
                     primary.connection_status = 'disconnected'
                     db.session.commit()
+            else:
+                app.logger.info(f"Primary account {primary.account_name} status is '{primary.connection_status}', not starting option chains")
         
     app.logger.info('Option chain background service started', extra={'event': 'service_init'})
     

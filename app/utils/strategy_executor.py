@@ -157,12 +157,12 @@ class StrategyExecutor:
         logger.info(f"All threads completed for leg {leg.leg_number}. Total results: {len(results)}")
 
         # Mark leg as executed in the main session after all accounts complete
-        # Check if at least one order succeeded
-        successful_orders = [r for r in results if r.get('status') == 'success']
+        # Check if at least one order succeeded or is pending (pending = order placed but not filled yet)
+        successful_orders = [r for r in results if r.get('status') in ['success', 'pending']]
         failed_orders = [r for r in results if r.get('status') in ['failed', 'error']]
         skipped_orders = [r for r in results if r.get('status') == 'skipped']
 
-        logger.info(f"Leg {leg.leg_number} execution summary: {len(successful_orders)} success, {len(failed_orders)} failed, {len(skipped_orders)} skipped")
+        logger.info(f"Leg {leg.leg_number} execution summary: {len(successful_orders)} success/pending, {len(failed_orders)} failed, {len(skipped_orders)} skipped")
 
         # Log details of any failures
         for failed in failed_orders:

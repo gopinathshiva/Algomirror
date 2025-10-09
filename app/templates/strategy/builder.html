@@ -980,9 +980,10 @@ function toggleStrikeInput(select) {
 function saveStrategy(execute = false) {
     const legs = [];
     document.querySelectorAll('.leg-item').forEach((legItem, index) => {
-        // Skip executed legs - don't send them to server
-        if (legItem.dataset.isExecuted === 'true') {
-            return; // Skip this leg
+        // Skip executed or pending legs - backend preserves them automatically
+        // Sending them would create duplicate legs
+        if (legItem.dataset.isExecuted === 'true' || legItem.dataset.isPending === 'true') {
+            return;
         }
 
         const strikeSelect = legItem.querySelector('.leg-strike-selection');

@@ -232,7 +232,26 @@ def create_app(config_name=None):
             
             # Check if within trading hours and trigger option chains
             if primary.connection_status == 'connected':
-                option_chain_service.on_primary_account_connected(primary)
+                try:
+                    # Test API connection before starting option chains
+                    from app.utils.openalgo_client import ExtendedOpenAlgoAPI
+                    test_client = ExtendedOpenAlgoAPI(
+                        api_key=primary.get_api_key(),
+                        host=primary.host_url
+                    )
+                    # Quick ping test
+                    ping_response = test_client.ping()
+                    if ping_response.get('status') == 'success':
+                        option_chain_service.on_primary_account_connected(primary)
+                    else:
+                        # Authentication failed - update connection status
+                        app.logger.warning(f"Primary account {primary.account_name} failed authentication, marking as disconnected")
+                        primary.connection_status = 'disconnected'
+                        db.session.commit()
+                except Exception as e:
+                    app.logger.error(f"Error testing primary account connection: {e}")
+                    primary.connection_status = 'disconnected'
+                    db.session.commit()
         
     app.logger.info('Option chain background service started', extra={'event': 'service_init'})
     

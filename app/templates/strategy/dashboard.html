@@ -257,6 +257,38 @@
     </form>
 </dialog>
 
+<!-- Execute Strategy Confirmation Modal -->
+<dialog id="execute_strategy_modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Execute Strategy</h3>
+        <p class="py-4">Are you sure you want to execute this strategy?</p>
+        <p class="text-sm text-warning" id="marketWarning" style="display: none;">⚠️ Market is currently closed. Orders may be queued until market opens.</p>
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="execute_strategy_modal.close()">Cancel</button>
+            <button class="btn btn-primary" onclick="confirmExecuteStrategy()">Execute</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
+<!-- Close Positions Confirmation Modal -->
+<dialog id="close_positions_modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Close All Positions</h3>
+        <p class="py-4">Are you sure you want to close all positions for this strategy?</p>
+        <p class="text-sm text-warning">This action will place market orders to exit all positions.</p>
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="close_positions_modal.close()">Cancel</button>
+            <button class="btn btn-error" onclick="confirmClosePositions()">Close All Positions</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
 <script>
 // Trading hours management
 let isTradingHours = false;
@@ -267,53 +299,69 @@ let pollingIntervals = {
     tradingHoursCheck: null
 };
 
-// Execute Strategy
+// Store current strategy ID for modal execution
+let currentStrategyId = null;
+
+// Execute Strategy - Show modal
 function executeStrategy(strategyId) {
-    // Check if market is open
-    if (!isTradingHours) {
-        if (!confirm('⚠️ Market is currently closed. Do you still want to execute this strategy? Orders may be queued until market opens.')) {
-            return;
-        }
+    currentStrategyId = strategyId;
+
+    // Check if market is open and show warning
+    const marketWarning = document.getElementById('marketWarning');
+    if (!isTradingHours && marketWarning) {
+        marketWarning.style.display = 'block';
+    } else if (marketWarning) {
+        marketWarning.style.display = 'none';
     }
 
-    if (confirm('Are you sure you want to execute this strategy?')) {
-        fetch(`/strategy/execute/${strategyId}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+    // Show modal
+    execute_strategy_modal.showModal();
+}
+
+// Confirm Execute Strategy - Actually execute after modal confirmation
+function confirmExecuteStrategy() {
+    if (!currentStrategyId) return;
+
+    execute_strategy_modal.close();
+
+    fetch(`/strategy/execute/${currentStrategyId}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Handle different execution statuses
+        if (data.status === 'success') {
+            showNotification(data.message || 'Strategy executed successfully', 'success');
+            // Manually refresh data immediately
+            loadStrategyMetrics();
+            loadAccountFunds();
+            loadAccountPnL();
+            setTimeout(() => location.reload(), 1500);
+        } else if (data.status === 'warning') {
+            // Orders were skipped (e.g., insufficient margin)
+            showNotification(data.message || 'Strategy execution skipped', 'warning');
+            if (data.summary) {
+                console.log(`Skipped: ${data.summary.skipped_orders} orders`);
             }
-        })
-        .then(response => response.json())
-        .then(data => {
-            // Handle different execution statuses
-            if (data.status === 'success') {
-                showNotification(data.message || 'Strategy executed successfully', 'success');
-                // Manually refresh data immediately
-                loadStrategyMetrics();
-                loadAccountFunds();
-                loadAccountPnL();
-                setTimeout(() => location.reload(), 1500);
-            } else if (data.status === 'warning') {
-                // Orders were skipped (e.g., insufficient margin)
-                showNotification(data.message || 'Strategy execution skipped', 'warning');
-                if (data.summary) {
-                    console.log(`Skipped: ${data.summary.skipped_orders} orders`);
-                }
-            } else if (data.status === 'partial') {
-                // Some orders succeeded, some failed/skipped
-                showNotification(data.message || 'Strategy partially executed', 'warning');
-                setTimeout(() => location.reload(), 2000);
-            } else {
-                // Error status
-                showNotification(data.message || 'Failed to execute strategy', 'error');
-            }
-        })
-        .catch(error => {
-            showNotification('Error executing strategy', 'error');
-            console.error('Error:', error);
-        });
-    }
+        } else if (data.status === 'partial') {
+            // Some orders succeeded, some failed/skipped
+            showNotification(data.message || 'Strategy partially executed', 'warning');
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            // Error status
+            showNotification(data.message || 'Failed to execute strategy', 'error');
+        }
+    })
+    .catch(error => {
+        showNotification('Error executing strategy', 'error');
+        console.error('Error:', error);
+    });
+
+    currentStrategyId = null;
 }
 
 // Manual refresh (works even outside trading hours)
@@ -372,14 +420,20 @@ async function loadStrategyMetrics() {
     }
 }
 
-// Close positions for a strategy
-async function closePositions(strategyId) {
-    if (!confirm('Are you sure you want to close all positions for this strategy?')) {
-        return;
-    }
+// Close positions for a strategy - Show modal
+function closePositions(strategyId) {
+    currentStrategyId = strategyId;
+    close_positions_modal.showModal();
+}
+
+// Confirm Close Positions - Actually close after modal confirmation
+async function confirmClosePositions() {
+    if (!currentStrategyId) return;
+
+    close_positions_modal.close();
 
     try {
-        const response = await fetch(`/strategy/${strategyId}/close-all`, {
+        const response = await fetch(`/strategy/${currentStrategyId}/close-all`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -400,6 +454,8 @@ async function closePositions(strategyId) {
         console.error('Error closing positions:', error);
         showNotification('Error closing positions', 'error');
     }
+
+    currentStrategyId = null;
 }
 
 // Load account funds data

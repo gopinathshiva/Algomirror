@@ -469,6 +469,22 @@
     </div>
 </template>
 
+<!-- Close All Positions Confirmation Modal -->
+<dialog id="close_positions_modal" class="modal">
+    <div class="modal-box">
+        <h3 class="font-bold text-lg">Close All Positions</h3>
+        <p class="py-4">Are you sure you want to close all open positions for this strategy?</p>
+        <p class="text-sm text-warning">This action will place market orders to exit all positions.</p>
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="close_positions_modal.close()">Cancel</button>
+            <button class="btn btn-error" onclick="confirmClosePositions()">Close All Positions</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+    </form>
+</dialog>
+
 <script>
 let legCount = 0;
 let lotSizes = {};  // Store lot sizes fetched from backend
@@ -756,28 +772,30 @@ function saveStrategy(execute = false) {
                 .then(execData => {
                     // Handle different execution statuses
                     if (execData.status === 'success' || execData.status === 'partial') {
-                        showNotification(execData.message || 'Orders placed successfully! Refreshing...', 'success');
-
-                        // Immediately freeze all non-executed legs visually
-                        document.querySelectorAll('.leg-item').forEach(legItem => {
-                            if (legItem.dataset.isExecuted !== 'true') {
-                                freezeLeg(legItem, true);
-                            }
-                        });
-
-                        // Reload current page after 1.5 seconds to persist frozen state from database
-                        setTimeout(() => window.location.reload(), 1500);
+                        showNotification(execData.message || 'Orders placed successfully! Redirecting...', 'success');
+                        // Redirect to strategy dashboard after 1.5 seconds
+                        setTimeout(() => window.location.href = '/strategy', 1500);
                     } else if (execData.status === 'warning') {
                         // Orders were skipped due to insufficient margin
-                        showNotification(execData.message || 'Strategy execution skipped', 'warning');
+                        showNotification(execData.message || 'Strategy execution skipped. Redirecting...', 'warning');
                         // Show details if available
                         if (execData.results && execData.results.length > 0) {
                             console.log('Execution details:', execData.results);
                         }
+                        // Redirect to strategy dashboard after 2 seconds to show warning
+                        setTimeout(() => window.location.href = '/strategy', 2000);
                     } else {
                         // Error status
-                        showNotification(execData.message || 'Strategy execution failed', 'error');
+                        showNotification(execData.message || 'Strategy execution failed. Redirecting...', 'error');
+                        // Redirect to strategy dashboard after 2 seconds to show error
+                        setTimeout(() => window.location.href = '/strategy', 2000);
                     }
+                })
+                .catch(error => {
+                    showNotification('Error executing strategy. Redirecting...', 'error');
+                    console.error('Error:', error);
+                    // Redirect even on execution error
+                    setTimeout(() => window.location.href = '/strategy', 2000);
                 });
             } else {
                 setTimeout(() => window.location.href = '/strategy', 1500);
@@ -1120,11 +1138,17 @@ async function loadPositions(strategyId) {
     }
 }
 
-async function closeAllPositions() {
+// Show modal for close positions confirmation
+function closeAllPositions() {
     {% if strategy %}
-    if (!confirm('Are you sure you want to close all open positions for this strategy?')) {
-        return;
-    }
+    close_positions_modal.showModal();
+    {% endif %}
+}
+
+// Actually close positions after confirmation
+async function confirmClosePositions() {
+    {% if strategy %}
+    close_positions_modal.close();
 
     try {
         const strategyId = {{ strategy.id }};

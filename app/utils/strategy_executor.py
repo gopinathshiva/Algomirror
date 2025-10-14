@@ -13,6 +13,7 @@ from app.models import Strategy, StrategyLeg, StrategyExecution, TradingAccount
 from app.utils.openalgo_client import ExtendedOpenAlgoAPI
 from app.utils.websocket_manager import ProfessionalWebSocketManager
 from app.utils.background_service import option_chain_service
+from app.utils.order_status_poller import order_status_poller
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class StrategyExecutor:
         ).all()
 
     def execute(self) -> List[Dict[str, Any]]:
-        """Execute strategy across all selected accounts"""
+        """Execute strategy across all selected accounts with PARALLEL leg execution"""
         if not self.accounts:
             raise ValueError("No active accounts selected for strategy")
 
@@ -61,31 +62,75 @@ class StrategyExecutor:
 
         print(f"\n[EXECUTE START] Strategy {self.strategy.id} - {self.strategy.name}")
         print(f"[EXECUTE] Total legs: {len(all_legs)}, Unexecuted legs: {len(legs)}")
+        print(f"[EXECUTE MODE] PARALLEL EXECUTION (Phase 1+2)")
         for leg in legs:
             print(f"  Leg {leg.leg_number}: {leg.instrument} {leg.action} {leg.option_type} {leg.strike_selection} offset={leg.strike_offset}")
 
         if not legs:
             raise ValueError("No unexecuted legs found for this strategy")
 
-        logger.info(f"Executing strategy {self.strategy.id}: {len(legs)} unexecuted legs across {len(self.accounts)} accounts")
+        logger.info(f"[PARALLEL MODE] Executing strategy {self.strategy.id}: {len(legs)} legs across "
+                   f"{len(self.accounts)} accounts in PARALLEL mode")
 
+        # PHASE 1: Execute all legs in PARALLEL
         results = []
-        for i, leg in enumerate(legs, 1):
-            logger.info(f"Executing leg {i}/{len(legs)}: {leg.instrument} {leg.action} {leg.option_type if leg.product_type == 'options' else ''}")
+        threads = []
+        results_lock = threading.Lock()
 
-            try:
+        for i, leg in enumerate(legs, 1):
+            logger.info(f"[LEG {i}] Starting parallel thread for leg {i}/{len(legs)}: "
+                       f"{leg.instrument} {leg.action} {leg.option_type if leg.product_type == 'options' else ''}")
+
+            # Create thread for each leg
+            thread = threading.Thread(
+                target=self._execute_leg_parallel,
+                args=(leg, results, results_lock),
+                name=f"Leg-{i}-{leg.instrument}",
+                daemon=False
+            )
+            thread.start()
+            threads.append(thread)
+
+        # Wait for all legs to complete
+        logger.info(f"[WAITING] Waiting for {len(threads)} legs to complete...")
+        for thread in threads:
+            thread.join()
+
+        logger.info(f"[COMPLETED] All {len(legs)} legs completed. Total orders: {len(results)}")
+        print(f"[EXECUTE END] Total orders placed: {len(results)}")
+
+        return results
+
+    def _execute_leg_parallel(self, leg: StrategyLeg, results: List, results_lock: threading.Lock):
+        """
+        Execute a single leg across all accounts (called in parallel with other legs)
+        Thread-safe version that appends to shared results list
+        """
+        try:
+            # Create fresh app context for this thread (similar to _monitor_exit_conditions)
+            from app import create_app
+            app = create_app()
+
+            with app.app_context():
+                logger.info(f"[LEG {leg.leg_number}] [STARTING] Starting parallel execution")
+
+                # Reuse existing _execute_leg logic
                 leg_results = self._execute_leg(leg)
-                results.extend(leg_results)
-                logger.info(f"Leg {i} execution results: {len(leg_results)} orders placed")
-            except Exception as e:
-                logger.error(f"Error executing leg {i}: {e}")
+
+                # Thread-safe append to results
+                with results_lock:
+                    results.extend(leg_results)
+
+                logger.info(f"[LEG {leg.leg_number}] [COMPLETED] Completed: {len(leg_results)} orders")
+
+        except Exception as e:
+            logger.error(f"[LEG {leg.leg_number}] [ERROR] Error: {e}", exc_info=True)
+            with results_lock:
                 results.append({
-                    'leg': i,
+                    'leg': leg.leg_number,
                     'status': 'error',
                     'error': str(e)
                 })
-
-        return results
 
     def _execute_leg(self, leg: StrategyLeg) -> List[Dict[str, Any]]:
         """Execute a strategy leg across all accounts"""
@@ -186,120 +231,58 @@ class StrategyExecutor:
         account_name = account.account_name
         logger.info(f"[THREAD START] Executing leg {leg.leg_number} on account {account_name}: {symbol} {leg.action} qty={quantity}")
 
-        try:
+        # Create fresh app context for this thread to avoid session conflicts
+        from app import create_app
+        app = create_app()
 
-            # Get API key before entering thread context
-            api_key = account.get_api_key()
-            account_id = account.id
-            account_name = account.account_name
-            host_url = account.host_url
+        with app.app_context():
+            try:
+                # Get API key before creating client
+                api_key = account.get_api_key()
+                account_id = account.id
+                account_name = account.account_name
+                host_url = account.host_url
 
-            client = ExtendedOpenAlgoAPI(
-                api_key=api_key,
-                host=host_url
-            )
+                client = ExtendedOpenAlgoAPI(
+                    api_key=api_key,
+                    host=host_url
+                )
 
-            # Prepare order parameters based on order type and price condition
-            order_params = {
-                'strategy': f"Strategy_{self.strategy.id}",
-                'symbol': symbol,
-                'action': leg.action,
-                'exchange': exchange,
-                'product': self.strategy.product_order_type or 'MIS',  # Use strategy's product order type
-                'quantity': quantity
-            }
+                # Prepare order parameters based on order type and price condition
+                order_params = {
+                    'strategy': f"Strategy_{self.strategy.id}",
+                    'symbol': symbol,
+                    'action': leg.action,
+                    'exchange': exchange,
+                    'product': self.strategy.product_order_type or 'MIS',  # Use strategy's product order type
+                    'quantity': quantity
+                }
 
-            # Handle different order types
-            if leg.order_type == 'MARKET':
-                order_params['price_type'] = 'MARKET'
+                # Handle different order types
+                if leg.order_type == 'MARKET':
+                    order_params['price_type'] = 'MARKET'
 
-            elif leg.order_type == 'LIMIT':
-                # Simple LIMIT order
-                order_params['price_type'] = 'LIMIT'
-                if leg.limit_price:
-                    order_params['price'] = leg.limit_price
+                elif leg.order_type == 'LIMIT':
+                    # Simple LIMIT order
+                    order_params['price_type'] = 'LIMIT'
+                    if leg.limit_price:
+                        order_params['price'] = leg.limit_price
 
-            print(f"[ORDER PARAMS] Placing order for {account_name}: {order_params}")
-            logger.debug(f"Order params: {order_params}")
+                print(f"[ORDER PARAMS] Placing order for {account_name}: {order_params}")
+                logger.debug(f"Order params: {order_params}")
 
-            # Place order
-            response = client.placeorder(**order_params)
-            print(f"[ORDER RESPONSE] {response}")
+                # Place order
+                response = client.placeorder(**order_params)
+                print(f"[ORDER RESPONSE] {response}")
 
-            if response.get('status') == 'success':
-                order_id = response.get('orderid')
+                if response.get('status') == 'success':
+                    order_id = response.get('orderid')
 
-                # Wait for order to be processed by broker and fetch status
-                # Retry multiple times as broker may take time to update status
-                import time
-                order_status_data = None
-                max_status_checks = 3
+                    # PHASE 2: Save as 'pending' immediately, no blocking wait!
+                    # Background poller will update status asynchronously
+                    logger.info(f"[ORDER PLACED] Order ID: {order_id} for {symbol} on {account_name} (will poll status)")
 
-                for attempt in range(max_status_checks):
-                    # Wait before checking (2 seconds first attempt, 1 second for retries)
-                    wait_time = 2 if attempt == 0 else 1
-                    time.sleep(wait_time)
-
-                    # Fetch actual order status
-                    order_status_data = self._get_order_status(client, order_id, self.strategy.name)
-
-                    if order_status_data:
-                        broker_status = order_status_data.get('order_status', 'open')
-
-                        # If status is final (complete/rejected/cancelled), stop checking
-                        if broker_status in ['complete', 'rejected', 'cancelled']:
-                            logger.info(f"Order {order_id} final status: {broker_status} (attempt {attempt + 1}/{max_status_checks})")
-                            break
-
-                        # If still 'open', retry (unless last attempt)
-                        if broker_status == 'open' and attempt < max_status_checks - 1:
-                            logger.info(f"Order {order_id} still open, will retry status check (attempt {attempt + 1}/{max_status_checks})")
-                            continue
-
-                    # If no data or final attempt, use what we have
-                    break
-
-                # Determine execution status based on broker order status AND price
-                # OpenAlgo valid statuses: 'complete', 'open', 'rejected', 'cancelled'
-                broker_order_status = order_status_data.get('order_status') if order_status_data else None
-                entry_price = order_status_data.get('average_price', 0) if order_status_data else 0
-
-                # Map broker status to execution status
-                # IMPORTANT: Check broker_order_status FIRST before using price
-                # For LIMIT orders, average_price may contain limit price even when not filled
-                if broker_order_status == 'complete':
-                    # Explicitly completed by broker
-                    execution_status = 'entered'
-                    logger.info(f"Order {order_id} completed successfully for {symbol} on {account_name}")
-                elif broker_order_status in ['rejected', 'cancelled']:
-                    # Rejected/cancelled orders are marked as failed
-                    execution_status = 'failed'
-                    logger.warning(f"Order {order_id} was {broker_order_status} by broker for {symbol} on {account_name}")
-                elif broker_order_status == 'open':
-                    # Explicitly open (pending fill)
-                    execution_status = 'pending'
-                    logger.info(f"Order {order_id} is open (pending fill) for {symbol} on {account_name}")
-                elif broker_order_status is None:
-                    # Broker didn't provide status - use price as fallback
-                    # Only mark as filled if we have a valid average price AND it's a MARKET order
-                    # For LIMIT orders, average_price might be the limit price, not execution price
-                    if entry_price and entry_price > 0 and order_params.get('price_type') == 'MARKET':
-                        execution_status = 'entered'
-                        broker_order_status = 'complete'
-                        logger.info(f"Order {order_id} assumed filled at {entry_price} for {symbol} on {account_name} (broker status unknown)")
-                    else:
-                        # Conservative: mark as pending if broker status unknown
-                        execution_status = 'pending'
-                        broker_order_status = 'open'
-                        logger.warning(f"Order {order_id} status unknown, marking as pending for {symbol} on {account_name}")
-                else:
-                    # Unknown status - mark as pending with warning
-                    execution_status = 'pending'
-                    broker_order_status = 'open'
-                    logger.warning(f"Unknown broker order status '{broker_order_status}' for order {order_id}, defaulting to pending")
-
-                # Create execution record with app context for thread safety
-                with self.app.app_context():
+                    # Create execution record (already in app context from _execute_leg_parallel)
                     execution = StrategyExecution(
                         strategy_id=self.strategy.id,
                         account_id=account_id,
@@ -308,10 +291,10 @@ class StrategyExecutor:
                         symbol=symbol,
                         exchange=exchange,
                         quantity=quantity,
-                        status=execution_status,
-                        broker_order_status=broker_order_status,
+                        status='pending',  # Will be updated by background poller
+                        broker_order_status='open',  # Assume open until poller updates
                         entry_time=datetime.utcnow(),
-                        entry_price=order_status_data.get('average_price') if order_status_data else None
+                        entry_price=None  # Will be set when filled
                     )
 
                     with self.lock:
@@ -338,71 +321,49 @@ class StrategyExecutor:
                                     db.session.rollback()
                                     raise
 
-                        # Report status based on execution status
-                        if execution_status == 'failed':
-                            results.append({
-                                'account': account_name,
-                                'symbol': symbol,
-                                'order_id': order_id,
-                                'status': 'failed',
-                                'error': f"Order {broker_order_status} by broker",
-                                'order_status': broker_order_status,
-                                'leg': leg.leg_number
-                            })
-                        elif execution_status == 'pending':
-                            results.append({
-                                'account': account_name,
-                                'symbol': symbol,
-                                'order_id': order_id,
-                                'status': 'pending',
-                                'message': 'Order placed but not yet filled',
-                                'order_status': broker_order_status,
-                                'leg': leg.leg_number
-                            })
-                        else:  # execution_status == 'entered'
-                            results.append({
-                                'account': account_name,
-                                'symbol': symbol,
-                                'order_id': order_id,
-                                'status': 'success',
-                                'order_status': broker_order_status,
-                                'executed_price': order_status_data.get('average_price', 0) if order_status_data else 0,
-                                'leg': leg.leg_number
-                            })
+                        # PHASE 2: Add order to background poller for status tracking
+                        order_status_poller.add_order(
+                            execution_id=execution.id,
+                            account=account,
+                            order_id=order_id,
+                            strategy_name=f"Strategy_{self.strategy.id}"
+                        )
 
-                            # Start monitoring for exits only for successfully filled positions
-                            self._start_exit_monitoring(execution)
+                        # Report as pending - background poller will update status
+                        results.append({
+                            'account': account_name,
+                            'symbol': symbol,
+                            'order_id': order_id,
+                            'status': 'pending',
+                            'message': 'Order placed, checking status in background',
+                            'order_status': 'open',
+                            'leg': leg.leg_number
+                        })
 
-                # Log appropriate message based on execution status
-                if execution_status == 'failed':
-                    logger.warning(f"[THREAD REJECTED] Leg {leg.leg_number} was {broker_order_status} by broker on {account_name}, order_id: {order_id}")
-                elif execution_status == 'pending':
-                    logger.info(f"[THREAD PENDING] Leg {leg.leg_number} order placed but not yet filled on {account_name}, order_id: {order_id}")
+                        logger.info(f"[THREAD SUCCESS] Leg {leg.leg_number} order placed on {account_name}, order_id: {order_id} (polling in background)")
+
                 else:
-                    logger.info(f"[THREAD SUCCESS] Leg {leg.leg_number} executed successfully on {account_name}, order_id: {order_id}")
+                    error_msg = response.get('message', 'Order placement failed')
+                    logger.error(f"[THREAD FAILED] Leg {leg.leg_number} failed on {account_name}: {error_msg}")
+                    with self.lock:
+                        results.append({
+                            'account': account_name,
+                            'symbol': symbol,
+                            'status': 'failed',
+                            'error': error_msg,
+                            'leg': leg.leg_number
+                        })
 
-            else:
-                error_msg = response.get('message', 'Order placement failed')
-                logger.error(f"[THREAD FAILED] Leg {leg.leg_number} failed on {account_name}: {error_msg}")
+            except Exception as e:
+                logger.error(f"[THREAD ERROR] Error executing leg {leg.leg_number} on account {account_name}: {e}", exc_info=True)
                 with self.lock:
                     results.append({
-                        'account': account_name,
+                        'account': account_name if 'account_name' in locals() else 'unknown',
                         'symbol': symbol,
-                        'status': 'failed',
-                        'error': error_msg,
+                        'status': 'error',
+                        'error': str(e),
                         'leg': leg.leg_number
                     })
-
-        except Exception as e:
-            logger.error(f"[THREAD ERROR] Error executing leg {leg.leg_number} on account {account_name}: {e}", exc_info=True)
-            with self.lock:
-                results.append({
-                    'account': account_name if 'account_name' in locals() else 'unknown',
-                    'symbol': symbol,
-                    'status': 'error',
-                    'error': str(e),
-                    'leg': leg.leg_number
-                })
 
         logger.info(f"[THREAD END] Completed execution for leg {leg.leg_number} on account {account_name}")
 

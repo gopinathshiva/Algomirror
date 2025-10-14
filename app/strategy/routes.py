@@ -607,7 +607,7 @@ def modify_leg_orders(strategy_id, leg_id):
         if modified_count > 0 and failed_count == 0:
             return jsonify({
                 'status': 'success',
-                'message': f'Modified {modified_count} order(s) for leg {leg.leg_number} to ₹{new_price}',
+                'message': f'Modified {modified_count} order(s) for leg {leg.leg_number} to Rs.{new_price}',
                 'modified': modified_count
             })
         elif modified_count > 0:

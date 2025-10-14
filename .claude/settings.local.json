@@ -21,7 +21,10 @@
       "Bash(del check_accounts.py)",
       "Read(//d/openalgo-multi/openalgo2/**)",
       "Bash(del add_product_order_type.py)",
-      "Bash(timeout:*)"
+      "Bash(timeout:*)",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(cmd //c \"taskkill /F /PID 288092 & taskkill /F /PID 271888 & taskkill /F /PID 238620 & taskkill /F /PID 266468 & taskkill /F /PID 231432\")",
+      "Bash(cmd //c \"taskkill /F /PID 142896 & taskkill /F /PID 143264 & taskkill /F /PID 147896 & taskkill /F /PID 147656 & taskkill /F /PID 234096 & taskkill /F /PID 233816 & taskkill /F /PID 274304 & taskkill /F /PID 284024\")"
     ],
     "deny": [],
     "ask": []

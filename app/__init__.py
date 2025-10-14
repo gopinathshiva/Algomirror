@@ -207,7 +207,12 @@ def create_app(config_name=None):
     # Initialize option chain background service
     from app.utils.background_service import option_chain_service
     option_chain_service.start_service()
-    
+
+    # Initialize order status poller (Phase 2)
+    from app.utils.order_status_poller import order_status_poller
+    order_status_poller.start()
+    app.logger.info('Order status poller started', extra={'event': 'poller_init'})
+
     # Load existing primary and backup accounts within app context
     with app.app_context():
         from app.models import TradingAccount

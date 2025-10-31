@@ -1334,7 +1334,7 @@ class StrategyExecutor:
                 if order_status_response.get('status') == 'success':
                     order_data = order_status_response.get('data', {})
                     execution.exit_price = order_data.get('average_price')
-                    execution.broker_order_status = order_data.get('status')
+                    execution.broker_order_status = order_data.get('order_status')  # OpenAlgo API returns 'order_status' not 'status'
 
                 db.session.commit()
 

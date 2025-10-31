@@ -130,7 +130,7 @@ class OrderStatusPoller:
 
             if response.get('status') == 'success':
                 data = response.get('data', {})
-                broker_status = data.get('status')  # Fixed: API returns 'status', not 'order_status'
+                broker_status = data.get('order_status')  # OpenAlgo API returns 'order_status' not 'status'
                 avg_price = data.get('average_price', 0)
 
                 # Update database

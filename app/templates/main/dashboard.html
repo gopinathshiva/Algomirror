@@ -155,7 +155,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for strategy in strategies[:5] %}
+                        {% for strategy in strategies %}
                         <tr>
                             <td class="font-medium">{{ strategy.name }}</td>
                             <td>
@@ -382,7 +382,7 @@ function manualRefresh() {
 async function loadStrategyMetrics() {
     const strategies = {{ strategies_json|tojson }};
 
-    for (const strategy of strategies.slice(0, 5)) {
+    for (const strategy of strategies) {
         try {
             // Load positions for position count
             const posResponse = await fetch(`/strategy/${strategy.id}/positions`);

@@ -1285,7 +1285,13 @@ def strategy_positions(strategy_id):
             'ltp': str(ltp),
             'pnl': str(round(pnl, 2)),
             'is_closed': is_closed,  # Flag to indicate closed position
-            'status': position.status  # Add status for debugging
+            'status': position.status,  # Add status for debugging
+            'supertrend_exit_enabled': strategy.supertrend_exit_enabled,  # Supertrend risk management
+            'stop_loss': position.leg.stop_loss_value if position.leg else None,  # Leg-level SL
+            'take_profit': position.leg.take_profit_value if position.leg else None,  # Leg-level TP
+            'max_loss': strategy.max_loss,  # Strategy-level max loss (Traditional)
+            'max_profit': strategy.max_profit,  # Strategy-level max profit (Traditional)
+            'trailing_sl': strategy.trailing_sl  # Strategy-level trailing SL (Traditional)
         })
 
     # Save unrealized P&L to database with error handling for database locks

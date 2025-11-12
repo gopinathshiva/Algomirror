@@ -50,7 +50,7 @@
 .input.text-black {
     color: #000000 !important;
     -webkit-text-fill-color: #000000 !important;
-    font-weight: bold !important;
+    font-weight: normal !important;
 }
 
 /* Force black text for labels */
@@ -64,7 +64,7 @@
 .leg-item .input-bordered {
     color: #000000 !important;
     -webkit-text-fill-color: #000000 !important;
-    font-weight: bold !important;
+    font-weight: normal !important;
 }
 
 /* Placeholder text should be slightly lighter but still visible */
@@ -80,7 +80,7 @@
 /* Force black text even on option elements */
 .leg-item select option {
     color: #000000 !important;
-    font-weight: bold !important;
+    font-weight: normal !important;
 }
 
 /* Force black text for disabled inputs added by JavaScript */
@@ -90,7 +90,7 @@
 .input-disabled {
     color: #000000 !important;
     -webkit-text-fill-color: #000000 !important;
-    font-weight: bold !important;
+    font-weight: normal !important;
 }
 
 /* Global override for all form elements in strategy builder */
@@ -100,7 +100,7 @@
 #strategyForm select:disabled {
     color: #000000 !important;
     -webkit-text-fill-color: #000000 !important;
-    font-weight: bold !important;
+    font-weight: normal !important;
 }
 </style>
 <div class="container mx-auto px-4 py-6">
@@ -209,14 +209,16 @@
         <div class="card bg-base-100 shadow-lg mb-6">
             <div class="card-body">
                 <h2 class="card-title mb-2">Risk Management</h2>
-                <p class="text-xs text-base-content/60 mb-4">Choose ONE strategy - options are mutually exclusive</p>
+                <p class="text-xs text-base-content/60 mb-4">Check ONE option - Traditional OR Supertrend (mutually exclusive)</p>
 
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <!-- Traditional Risk Management Column -->
                     <div class="border rounded-lg p-4" id="traditional-risk-section">
                         <div class="flex items-center gap-2 mb-3">
-                            <input type="radio" id="useTraditionalRisk" name="riskManagementType" value="traditional"
-                                   class="radio radio-primary radio-sm" checked onchange="toggleRiskManagementType()">
+                            <input type="checkbox" id="useTraditionalRisk"
+                                   class="checkbox checkbox-primary checkbox-sm"
+                                   onchange="toggleRiskManagementType('traditional')"
+                                   {% if strategy and not strategy.supertrend_exit_enabled and (strategy.max_loss or strategy.max_profit or strategy.trailing_sl) %}checked{% endif %}>
                             <label for="useTraditionalRisk" class="cursor-pointer">
                                 <span class="font-semibold text-sm">Traditional</span>
                             </label>
@@ -249,8 +251,9 @@
                     <!-- Supertrend Exit Column -->
                     <div class="border rounded-lg p-4" id="supertrend-risk-section">
                         <div class="flex items-center gap-2 mb-3">
-                            <input type="radio" id="useSupertrendExit" name="riskManagementType" value="supertrend"
-                                   class="radio radio-primary radio-sm" onchange="toggleRiskManagementType()"
+                            <input type="checkbox" id="useSupertrendExit"
+                                   class="checkbox checkbox-primary checkbox-sm"
+                                   onchange="toggleRiskManagementType('supertrend')"
                                    {% if strategy and strategy.supertrend_exit_enabled %}checked{% endif %}>
                             <label for="useSupertrendExit" class="cursor-pointer">
                                 <span class="font-semibold text-sm">Supertrend Exit</span>
@@ -452,7 +455,7 @@
                                     <th>Account</th>
                                     <th>Leg</th>
                                     <th>Symbol</th>
-                                    <th>Exchange</th>
+                                    <th>Risk</th>
                                     <th>Product</th>
                                     <th>Action</th>
                                     <th>Qty</th>
@@ -1225,9 +1228,10 @@ async function checkAndFreezePendingLegs() {
     {% endif %}
 }
 
-// Toggle risk management type (Traditional vs Supertrend)
-function toggleRiskManagementType() {
-    const useTraditional = document.getElementById('useTraditionalRisk').checked;
+// Toggle risk management type (Traditional vs Supertrend) - Mutually Exclusive Checkboxes
+function toggleRiskManagementType(selectedType) {
+    const traditionalCheckbox = document.getElementById('useTraditionalRisk');
+    const supertrendCheckbox = document.getElementById('useSupertrendExit');
 
     // Get all traditional fields
     const traditionalFields = document.querySelectorAll('#traditional-risk-fields input');
@@ -1235,20 +1239,27 @@ function toggleRiskManagementType() {
     // Get all supertrend fields
     const supertrendFields = document.querySelectorAll('#supertrend-risk-fields input, #supertrend-risk-fields select');
 
-    if (useTraditional) {
+    // Implement mutual exclusion
+    if (selectedType === 'traditional' && traditionalCheckbox.checked) {
+        // Uncheck supertrend
+        supertrendCheckbox.checked = false;
+
         // Enable traditional fields
         traditionalFields.forEach(field => {
             field.disabled = false;
             field.classList.remove('input-disabled', 'cursor-not-allowed');
         });
 
-        // Disable and clear supertrend fields
+        // Disable supertrend fields
         supertrendFields.forEach(field => {
             field.disabled = true;
             field.classList.add('input-disabled', 'cursor-not-allowed');
         });
-    } else {
-        // Disable and clear traditional fields
+    } else if (selectedType === 'supertrend' && supertrendCheckbox.checked) {
+        // Uncheck traditional
+        traditionalCheckbox.checked = false;
+
+        // Disable traditional fields
         traditionalFields.forEach(field => {
             field.disabled = true;
             field.classList.add('input-disabled', 'cursor-not-allowed');
@@ -1258,6 +1269,17 @@ function toggleRiskManagementType() {
         supertrendFields.forEach(field => {
             field.disabled = false;
             field.classList.remove('input-disabled', 'cursor-not-allowed');
+        });
+    } else {
+        // Both unchecked - disable all fields
+        traditionalFields.forEach(field => {
+            field.disabled = true;
+            field.classList.add('input-disabled', 'cursor-not-allowed');
+        });
+
+        supertrendFields.forEach(field => {
+            field.disabled = true;
+            field.classList.add('input-disabled', 'cursor-not-allowed');
         });
     }
 }
@@ -1408,6 +1430,7 @@ function saveStrategy(execute = false) {
 
     // Determine which risk management type is selected
     const useTraditional = document.getElementById('useTraditionalRisk').checked;
+    const useSupertrendExit = document.getElementById('useSupertrendExit').checked;
 
     const strategyData = {
         name: document.getElementById('strategyName').value,
@@ -1421,11 +1444,11 @@ function saveStrategy(execute = false) {
         max_profit: useTraditional ? (parseFloat(document.getElementById('maxProfit').value) || null) : null,
         trailing_sl: useTraditional ? (parseFloat(document.getElementById('trailingSl').value) || null) : null,
         // Supertrend exit settings (only if selected)
-        supertrend_exit_enabled: !useTraditional,
-        supertrend_exit_type: !useTraditional ? document.getElementById('supertrendExitType').value : null,
-        supertrend_period: !useTraditional ? parseInt(document.getElementById('supertrendPeriod').value) || 7 : null,
-        supertrend_multiplier: !useTraditional ? parseFloat(document.getElementById('supertrendMultiplier').value) || 3.0 : null,
-        supertrend_timeframe: !useTraditional ? document.getElementById('supertrendTimeframe').value : null,
+        supertrend_exit_enabled: useSupertrendExit,
+        supertrend_exit_type: useSupertrendExit ? document.getElementById('supertrendExitType').value : null,
+        supertrend_period: useSupertrendExit ? parseInt(document.getElementById('supertrendPeriod').value) || 7 : null,
+        supertrend_multiplier: useSupertrendExit ? parseFloat(document.getElementById('supertrendMultiplier').value) || 3.0 : null,
+        supertrend_timeframe: useSupertrendExit ? document.getElementById('supertrendTimeframe').value : null,
         legs: legs
     };
 
@@ -1550,7 +1573,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     await fetchLotSizes();
 
     // Initialize risk management toggle state
-    toggleRiskManagementType();
+    // Check which risk management is enabled (if any) and initialize fields accordingly
+    const traditionalCheckbox = document.getElementById('useTraditionalRisk');
+    const supertrendCheckbox = document.getElementById('useSupertrendExit');
+
+    if (traditionalCheckbox.checked) {
+        toggleRiskManagementType('traditional');
+    } else if (supertrendCheckbox.checked) {
+        toggleRiskManagementType('supertrend');
+    } else {
+        // Both unchecked by default - disable all fields
+        toggleRiskManagementType(null);
+    }
 
     {% if strategy_legs and strategy_legs|length > 0 %}
         // Load existing legs
@@ -1819,7 +1853,7 @@ async function loadPositions(strategyId) {
             console.log(`Loaded ${positions.length} positions:`, positions);
 
             if (positions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" class="text-center text-base-content/60">No positions</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" class="text-center text-base-content/60">No positions</td></tr>';
 
                 // Update open positions count to 0
                 const countElement = document.getElementById('open-positions-count');
@@ -1842,6 +1876,25 @@ async function loadPositions(strategyId) {
                         openPositionsCount++;
                     }
 
+                    // Determine Risk Management Type
+                    let riskMgmtType = 'No';
+                    let riskMgmtBadgeClass = 'badge-ghost';
+
+                    // Check for Supertrend - must be explicitly true
+                    if (position.supertrend_exit_enabled === true || position.supertrend_exit_enabled === 'true') {
+                        riskMgmtType = 'Supertrend';
+                        riskMgmtBadgeClass = 'badge-info';
+                    }
+                    // Check for Traditional - check both leg-level and strategy-level fields
+                    else if ((position.stop_loss && parseFloat(position.stop_loss) > 0) ||
+                             (position.take_profit && parseFloat(position.take_profit) > 0) ||
+                             (position.max_loss && parseFloat(position.max_loss) > 0) ||
+                             (position.max_profit && parseFloat(position.max_profit) > 0) ||
+                             (position.trailing_sl && parseFloat(position.trailing_sl) > 0)) {
+                        riskMgmtType = 'Traditional';
+                        riskMgmtBadgeClass = 'badge-warning';
+                    }
+
                     const action = qty < 0 ? 'SELL' : 'BUY';
                     const closeButtonHtml = isOpenPosition ?
                         `<button class="btn btn-circle btn-xs btn-error" onclick="closeIndividualPosition('${position.symbol}', '${position.exchange}', '${position.product}', ${position.account_id}, '${position.account_name}')" title="Close position for ${position.account_name}">
@@ -1855,7 +1908,7 @@ async function loadPositions(strategyId) {
                         <td><span class="badge badge-outline badge-sm">${position.account_name || 'N/A'}</span></td>
                         <td><span class="badge badge-primary badge-sm">${position.leg_number || '-'}</span></td>
                         <td>${position.symbol}</td>
-                        <td>${position.exchange}</td>
+                        <td><span class="badge ${riskMgmtBadgeClass} badge-sm">${riskMgmtType}</span></td>
                         <td>${position.product}</td>
                         <td><span class="badge ${action === 'BUY' ? 'badge-success' : 'badge-error'} badge-sm">${action}</span></td>
                         <td>${Math.abs(qty)}</td>

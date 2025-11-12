@@ -78,8 +78,8 @@ class RiskManager:
             if quantity == 0:
                 return (0.0, 0.0)
 
-            # Determine if long or short
-            is_long = execution.transaction_type.upper() == 'BUY'
+            # Determine if long or short from leg action
+            is_long = execution.leg and execution.leg.action.upper() == 'BUY'
 
             # Calculate realized P&L (if position is closed)
             if execution.status == 'exited' and exit_price > 0:

@@ -54,6 +54,7 @@ class PositionMonitor:
         self.websocket_manager = None
         self.subscribed_symbols: Set[str] = set()
         self.position_map: Dict[str, List[StrategyExecution]] = {}
+        self.app = None  # Store Flask app instance for creating app context
 
         logger.info("PositionMonitor initialized")
 
@@ -413,24 +414,24 @@ class PositionMonitor:
                 return
 
             # WebSocket callbacks run in separate thread - need app context
-            from flask import current_app, has_app_context
-            if has_app_context():
-                # Already in app context
+            if self.app is None:
+                logger.error("Flask app not set - cannot process WebSocket data")
+                return
+
+            # Create app context using stored app reference
+            with self.app.app_context():
                 self.update_last_price(symbol, exchange, float(ltp))
-            else:
-                # Need to create app context
-                with current_app.app_context():
-                    self.update_last_price(symbol, exchange, float(ltp))
 
         except Exception as e:
             logger.error(f"Error handling WebSocket data: {e}")
 
-    def start(self, websocket_manager):
+    def start(self, websocket_manager, app=None):
         """
         Start position monitoring.
 
         Args:
             websocket_manager: WebSocket manager instance
+            app: Flask app instance (for creating app context in WebSocket callbacks)
         """
         if self.is_running:
             logger.warning("Position monitor already running")
@@ -438,6 +439,11 @@ class PositionMonitor:
 
         # Store websocket manager reference
         self.websocket_manager = websocket_manager
+
+        # Store Flask app reference for creating app context
+        if app is not None:
+            self.app = app
+            logger.info("Flask app reference stored for WebSocket context")
 
         # Check if monitoring should start (app context provided by caller)
         if not self.should_start_monitoring():

@@ -873,8 +873,8 @@ class OptionChainBackgroundService:
                 logger.error("Failed to get shared WebSocket manager for position monitor")
                 return
 
-            # Start position monitor with shared WebSocket manager
-            position_monitor.start(ws_manager)
+            # Start position monitor with shared WebSocket manager and Flask app
+            position_monitor.start(ws_manager, app=self.flask_app)
             self.position_monitor_running = True
             logger.info("✅ Position monitor started with shared WebSocket connection")
 

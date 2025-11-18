@@ -1806,6 +1806,12 @@ def risk_status_stream():
                             entry_price = execution.entry_price or 0
                             action = leg.action if leg else 'BUY'
 
+                            # Debug logging for SL/TP
+                            if leg:
+                                print(f"[RISK SSE DEBUG] Execution {execution.id}: leg_id={leg.id}, SL_type={leg.stop_loss_type}, SL_value={leg.stop_loss_value}, TP_type={leg.take_profit_type}, TP_value={leg.take_profit_value}", flush=True)
+                            else:
+                                print(f"[RISK SSE DEBUG] Execution {execution.id}: NO LEG FOUND (leg_id={execution.leg_id})", flush=True)
+
                             # Determine price source and LTP
                             # Priority: WebSocket-updated last_price > option chain > calculated
                             price_source = 'offline'
@@ -1962,10 +1968,10 @@ def risk_status_stream():
                                 'price_source': price_source,
                                 'action': action,
                                 'leg_number': leg.leg_number if leg else 0,
-                                'sl_price': round(sl_price, 2) if sl_price else None,
+                                'sl_price': round(sl_price, 2) if sl_price is not None else None,
                                 'sl_distance': round(sl_distance, 2) if sl_distance is not None else None,
                                 'sl_hit': sl_hit,
-                                'tp_price': round(tp_price, 2) if tp_price else None,
+                                'tp_price': round(tp_price, 2) if tp_price is not None else None,
                                 'tp_distance': round(tp_distance, 2) if tp_distance is not None else None,
                                 'tp_hit': tp_hit,
                                 'trailing_sl_triggered': execution.trailing_sl_triggered,

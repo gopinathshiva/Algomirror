@@ -26,7 +26,10 @@
       "Bash(npm run build-css:*)",
       "Bash(npm install)",
       "Bash(.venvScriptspython.exe app.py)",
-      "Bash(Select-Object -Last 100)"
+      "Bash(Select-Object -Last 100)",
+      "Bash(.venv\\Scripts\\python.exe:*)",
+      "Bash(D:\\openalgo-multi\\algomirror\\.venv\\Scripts\\python.exe:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

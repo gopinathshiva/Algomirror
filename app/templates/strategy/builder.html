@@ -354,6 +354,125 @@
                     </div>
                 </div>
 
+                <!-- Risk Status Section -->
+                {% if strategy and (strategy.max_loss or strategy.max_profit or strategy.trailing_sl) %}
+                <div class="bg-base-200 rounded-lg p-4 mb-4" id="riskStatusSection">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="font-semibold flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                            </svg>
+                            Risk Status
+                            <span class="badge badge-sm" id="riskConnectionStatus">
+                                <span class="loading loading-spinner loading-xs"></span>
+                            </span>
+                        </h3>
+                        <div class="text-sm">
+                            <span class="text-base-content/60">Current P&L:</span>
+                            <span class="font-bold text-lg ml-1" id="riskCurrentPnl">₹0.00</span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <!-- Max Loss -->
+                        {% if strategy.max_loss %}
+                        <div class="bg-base-100 rounded-lg p-3">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span class="flex items-center gap-1">
+                                    <svg class="w-4 h-4 text-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path>
+                                    </svg>
+                                    Max Loss
+                                </span>
+                                <span class="font-mono font-bold">₹{{ strategy.max_loss }}</span>
+                            </div>
+                            <progress class="progress progress-error w-full h-3" id="riskMaxLossProgress" value="0" max="100"></progress>
+                            <div class="flex justify-between text-xs mt-1">
+                                <span id="riskMaxLossAmount">₹0.00</span>
+                                <span id="riskMaxLossPct">0%</span>
+                            </div>
+                            {% if strategy.auto_exit_on_max_loss %}
+                            <div class="badge badge-error badge-xs mt-2">Auto Exit</div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Max Profit -->
+                        {% if strategy.max_profit %}
+                        <div class="bg-base-100 rounded-lg p-3">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span class="flex items-center gap-1">
+                                    <svg class="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                                    </svg>
+                                    Max Profit
+                                </span>
+                                <span class="font-mono font-bold">₹{{ strategy.max_profit }}</span>
+                            </div>
+                            <progress class="progress progress-success w-full h-3" id="riskMaxProfitProgress" value="0" max="100"></progress>
+                            <div class="flex justify-between text-xs mt-1">
+                                <span id="riskMaxProfitAmount">₹0.00</span>
+                                <span id="riskMaxProfitPct">0%</span>
+                            </div>
+                            {% if strategy.auto_exit_on_max_profit %}
+                            <div class="badge badge-success badge-xs mt-2">Auto Exit</div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Trailing SL -->
+                        {% if strategy.trailing_sl %}
+                        <div class="bg-base-100 rounded-lg p-3">
+                            <div class="flex justify-between text-sm mb-2">
+                                <span class="flex items-center gap-1">
+                                    <svg class="w-4 h-4 text-warning" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                    </svg>
+                                    Trailing SL
+                                </span>
+                                <span class="font-mono font-bold">{{ strategy.trailing_sl }}{{ '%' if strategy.trailing_sl_type == 'percentage' else ' pts' if strategy.trailing_sl_type == 'points' else '' }}</span>
+                            </div>
+                            <div class="text-sm">
+                                <span class="text-base-content/60">Status:</span>
+                                <span class="badge badge-warning badge-sm ml-1" id="riskTrailingSLStatus">Inactive</span>
+                            </div>
+                            <div class="text-xs mt-2">
+                                <span class="text-base-content/60">Triggered at:</span>
+                                <span id="riskTrailingSLTrigger">--</span>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Leg-level SL/TP Tracking -->
+                    <div id="legRiskTracking" class="mt-4 hidden">
+                        <h4 class="text-sm font-semibold mb-2">Leg-Level Risk Tracking</h4>
+                        <div class="overflow-x-auto">
+                            <table class="table table-xs">
+                                <thead>
+                                    <tr>
+                                        <th>Leg</th>
+                                        <th>Symbol</th>
+                                        <th>LTP</th>
+                                        <th>SL</th>
+                                        <th>SL Dist</th>
+                                        <th>TP</th>
+                                        <th>TP Dist</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="legRiskTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Last Update -->
+                    <div class="text-xs text-base-content/50 mt-3 text-right">
+                        Last update: <span id="riskLastUpdate">--:--:--</span>
+                    </div>
+                </div>
+                {% endif %}
+
                 <!-- Tabs -->
                 <div class="border-b border-base-300 mb-4">
                     <div class="flex space-x-2">
@@ -365,6 +484,9 @@
                         </button>
                         <button type="button" class="px-6 py-3 font-semibold border-b-2 border-primary text-primary" id="tab-positions" onclick="showStrategyTab('positions', this)">
                             Positions
+                        </button>
+                        <button type="button" class="px-6 py-3 font-semibold border-b-2 border-transparent text-base-content/60 hover:text-base-content hover:border-base-300" id="tab-riskmonitor" onclick="showStrategyTab('riskmonitor', this)">
+                            Risk Monitor
                         </button>
                     </div>
                 </div>
@@ -493,6 +615,60 @@
                             <div class="stat-desc">Currently active</div>
                         </div>
                         {% endif %}
+                    </div>
+                </div>
+
+                <!-- Risk Monitor Tab -->
+                <div id="riskmonitor-tab" class="strategy-tab hidden">
+                    <div class="mb-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <h3 class="font-semibold">Leg-Level Risk Tracking</h3>
+                            <span class="badge badge-sm" id="riskMonitorConnection">
+                                <span class="loading loading-spinner loading-xs"></span> Connecting...
+                            </span>
+                        </div>
+                        <p class="text-sm text-base-content/60">Real-time stop loss and take profit monitoring for each leg</p>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-compact">
+                            <thead>
+                                <tr>
+                                    <th>Leg</th>
+                                    <th>Symbol</th>
+                                    <th>Action</th>
+                                    <th>Entry</th>
+                                    <th>LTP</th>
+                                    <th>SL Price</th>
+                                    <th>SL Dist</th>
+                                    <th>TP Price</th>
+                                    <th>TP Dist</th>
+                                    <th>P&L</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="riskmonitor-body">
+                                <tr>
+                                    <td colspan="11" class="text-center text-base-content/60">Loading risk data...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="stats shadow mt-4">
+                        <div class="stat">
+                            <div class="stat-title">Total Unrealized P&L</div>
+                            <div class="stat-value" id="riskmonitor-total-pnl">₹0.00</div>
+                            <div class="stat-desc">Real-time from WebSocket</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-title">Legs with SL</div>
+                            <div class="stat-value text-sm" id="riskmonitor-sl-count">0</div>
+                            <div class="stat-desc">Stop loss configured</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-title">Legs with TP</div>
+                            <div class="stat-value text-sm" id="riskmonitor-tp-count">0</div>
+                            <div class="stat-desc">Take profit configured</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1730,6 +1906,11 @@ function showStrategyTab(tabName, element) {
 
     // Show selected tab
     document.getElementById(tabName + '-tab').classList.remove('hidden');
+
+    // Load risk monitor data when that tab is shown
+    if (tabName === 'riskmonitor') {
+        loadRiskMonitorData();
+    }
 }
 
 function loadStrategyData() {
@@ -1750,6 +1931,337 @@ function loadStrategyData() {
 function refreshStrategyData() {
     loadStrategyData();
     showNotification('Data refreshed', 'success');
+}
+
+// Risk Monitor Tab Functions
+let riskMonitorEventSource = null;
+
+function loadRiskMonitorData() {
+    {% if strategy %}
+    const strategyId = {{ strategy.id }};
+
+    // Close existing connection
+    if (riskMonitorEventSource) {
+        riskMonitorEventSource.close();
+    }
+
+    // Update connection status
+    const statusEl = document.getElementById('riskMonitorConnection');
+    if (statusEl) {
+        statusEl.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Connecting...';
+        statusEl.className = 'badge badge-sm';
+    }
+
+    // Start SSE connection for risk data
+    riskMonitorEventSource = new EventSource('/trading/api/risk-status/stream');
+
+    riskMonitorEventSource.onopen = function() {
+        if (statusEl) {
+            statusEl.innerHTML = '<span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span></span> Connected';
+            statusEl.className = 'badge badge-sm badge-success';
+        }
+    };
+
+    riskMonitorEventSource.onmessage = function(event) {
+        try {
+            const response = JSON.parse(event.data);
+            if (response.status === 'success' && response.data) {
+                // Find this strategy's data
+                const strategyData = response.data.find(s => s.strategy_id === strategyId);
+                if (strategyData) {
+                    updateRiskMonitorTable(strategyData);
+                }
+            }
+        } catch (e) {
+            console.error('Error parsing risk data:', e);
+        }
+    };
+
+    riskMonitorEventSource.onerror = function() {
+        if (statusEl) {
+            statusEl.innerHTML = 'Offline';
+            statusEl.className = 'badge badge-sm badge-error';
+        }
+    };
+    {% endif %}
+}
+
+function updateRiskMonitorTable(strategyData) {
+    const tbody = document.getElementById('riskmonitor-body');
+    if (!tbody) return;
+
+    const executions = strategyData.executions || [];
+
+    if (executions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center text-base-content/60">No open positions</td></tr>';
+        return;
+    }
+
+    let html = '';
+    let totalPnl = 0;
+    let slCount = 0;
+    let tpCount = 0;
+
+    executions.forEach(exec => {
+        const pnl = exec.unrealized_pnl || 0;
+        totalPnl += pnl;
+
+        if (exec.sl_price) slCount++;
+        if (exec.tp_price) tpCount++;
+
+        const actionBadge = exec.action === 'BUY'
+            ? '<span class="badge badge-success badge-sm">BUY</span>'
+            : '<span class="badge badge-error badge-sm">SELL</span>';
+
+        // Status badge based on price source
+        let statusBadge;
+        switch (exec.price_source) {
+            case 'realtime':
+                statusBadge = '<span class="badge badge-success badge-xs">Live</span>';
+                break;
+            case 'cached':
+                statusBadge = '<span class="badge badge-info badge-xs">Cached</span>';
+                break;
+            case 'calculated':
+                statusBadge = '<span class="badge badge-info badge-xs">Est.</span>';
+                break;
+            default:
+                statusBadge = '<span class="badge badge-warning badge-xs">Offline</span>';
+        }
+
+        // SL display with color coding
+        let slPriceDisplay = exec.sl_price ? `<span class="font-mono text-error">${exec.sl_price.toFixed(2)}</span>` : '<span class="text-base-content/40">--</span>';
+        let slDistDisplay = '--';
+        if (exec.sl_distance !== null && exec.sl_distance !== undefined) {
+            const color = exec.sl_hit ? 'text-error font-bold animate-pulse' : (exec.sl_distance < 5 ? 'text-warning' : '');
+            slDistDisplay = exec.sl_hit
+                ? `<span class="${color}">HIT!</span>`
+                : `<span class="${color}">${exec.sl_distance.toFixed(1)} pts</span>`;
+        }
+
+        // TP display with color coding
+        let tpPriceDisplay = exec.tp_price ? `<span class="font-mono text-success">${exec.tp_price.toFixed(2)}</span>` : '<span class="text-base-content/40">--</span>';
+        let tpDistDisplay = '--';
+        if (exec.tp_distance !== null && exec.tp_distance !== undefined) {
+            const color = exec.tp_hit ? 'text-success font-bold animate-pulse' : (exec.tp_distance < 5 ? 'text-info' : '');
+            tpDistDisplay = exec.tp_hit
+                ? `<span class="${color}">HIT!</span>`
+                : `<span class="${color}">${exec.tp_distance.toFixed(1)} pts</span>`;
+        }
+
+        const pnlColor = pnl >= 0 ? 'text-success' : 'text-error';
+
+        html += `
+            <tr>
+                <td><span class="badge badge-primary badge-sm">${exec.leg_number}</span></td>
+                <td class="font-mono text-xs">${exec.symbol}</td>
+                <td>${actionBadge}</td>
+                <td class="font-mono">₹${(exec.entry_price || 0).toFixed(2)}</td>
+                <td class="font-mono font-bold">₹${(exec.last_price || 0).toFixed(2)}</td>
+                <td>${slPriceDisplay}</td>
+                <td class="text-xs">${slDistDisplay}</td>
+                <td>${tpPriceDisplay}</td>
+                <td class="text-xs">${tpDistDisplay}</td>
+                <td class="font-mono ${pnlColor}">₹${pnl.toFixed(2)}</td>
+                <td>${statusBadge}</td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+
+    // Update stats
+    const totalPnlEl = document.getElementById('riskmonitor-total-pnl');
+    if (totalPnlEl) {
+        totalPnlEl.textContent = `₹${totalPnl.toFixed(2)}`;
+        totalPnlEl.className = `stat-value ${totalPnl >= 0 ? 'text-success' : 'text-error'}`;
+    }
+
+    const slCountEl = document.getElementById('riskmonitor-sl-count');
+    if (slCountEl) slCountEl.textContent = slCount;
+
+    const tpCountEl = document.getElementById('riskmonitor-tp-count');
+    if (tpCountEl) tpCountEl.textContent = tpCount;
+}
+
+// Risk Status SSE Connection
+let riskEventSource = null;
+const strategyIdForRisk = {{ strategy.id if strategy else 'null' }};
+
+function startRiskStatusStream() {
+    if (!strategyIdForRisk || !document.getElementById('riskStatusSection')) {
+        return;
+    }
+
+    if (riskEventSource) {
+        riskEventSource.close();
+    }
+
+    riskEventSource = new EventSource('/trading/api/risk-status/stream');
+
+    riskEventSource.onopen = function() {
+        const statusEl = document.getElementById('riskConnectionStatus');
+        if (statusEl) {
+            statusEl.innerHTML = '<span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span></span>';
+            statusEl.className = 'badge badge-sm badge-success';
+        }
+    };
+
+    riskEventSource.onmessage = function(event) {
+        try {
+            const response = JSON.parse(event.data);
+            if (response.status === 'success') {
+                updateRiskStatusDisplay(response.data);
+            }
+        } catch (e) {
+            console.error('Error parsing risk SSE data:', e);
+        }
+    };
+
+    riskEventSource.onerror = function(error) {
+        const statusEl = document.getElementById('riskConnectionStatus');
+        if (statusEl) {
+            statusEl.innerHTML = 'Offline';
+            statusEl.className = 'badge badge-sm badge-error';
+        }
+        setTimeout(() => startRiskStatusStream(), 5000);
+    };
+}
+
+function updateRiskStatusDisplay(data) {
+    // Find data for current strategy
+    const strategyData = data.find(s => s.strategy_id === strategyIdForRisk);
+
+    if (!strategyData) {
+        return;
+    }
+
+    // Update current P&L
+    const currentPnlEl = document.getElementById('riskCurrentPnl');
+    if (currentPnlEl) {
+        const pnl = strategyData.total_pnl || 0;
+        currentPnlEl.textContent = `₹${pnl.toFixed(2)}`;
+        currentPnlEl.className = `font-bold text-lg ml-1 ${pnl >= 0 ? 'text-success' : 'text-error'}`;
+    }
+
+    // Update Max Loss progress
+    const maxLossProgress = document.getElementById('riskMaxLossProgress');
+    const maxLossAmount = document.getElementById('riskMaxLossAmount');
+    const maxLossPct = document.getElementById('riskMaxLossPct');
+
+    if (maxLossProgress && maxLossAmount && maxLossPct) {
+        const pct = strategyData.max_loss_pct || 0;
+        const amount = strategyData.total_pnl < 0 ? Math.abs(strategyData.total_pnl) : 0;
+
+        maxLossProgress.value = pct;
+        maxLossAmount.textContent = `₹${amount.toFixed(2)}`;
+        maxLossPct.textContent = `${pct}%`;
+
+        // Change color based on risk level
+        if (pct >= 80) {
+            maxLossProgress.className = 'progress progress-error w-full h-3';
+        } else if (pct >= 50) {
+            maxLossProgress.className = 'progress progress-warning w-full h-3';
+        } else {
+            maxLossProgress.className = 'progress progress-error w-full h-3';
+        }
+    }
+
+    // Update Max Profit progress
+    const maxProfitProgress = document.getElementById('riskMaxProfitProgress');
+    const maxProfitAmount = document.getElementById('riskMaxProfitAmount');
+    const maxProfitPct = document.getElementById('riskMaxProfitPct');
+
+    if (maxProfitProgress && maxProfitAmount && maxProfitPct) {
+        const pct = strategyData.max_profit_pct || 0;
+        const amount = strategyData.total_pnl > 0 ? strategyData.total_pnl : 0;
+
+        maxProfitProgress.value = pct;
+        maxProfitAmount.textContent = `₹${amount.toFixed(2)}`;
+        maxProfitPct.textContent = `${pct}%`;
+    }
+
+    // Update trailing SL status
+    const trailingSLStatus = document.getElementById('riskTrailingSLStatus');
+    const trailingSLTrigger = document.getElementById('riskTrailingSLTrigger');
+
+    if (trailingSLStatus) {
+        // Check if any execution has trailing SL triggered
+        const triggered = strategyData.executions.some(e => e.trailing_sl_triggered);
+        if (triggered) {
+            trailingSLStatus.textContent = 'Active';
+            trailingSLStatus.className = 'badge badge-success badge-sm ml-1';
+        } else {
+            trailingSLStatus.textContent = 'Inactive';
+            trailingSLStatus.className = 'badge badge-warning badge-sm ml-1';
+        }
+    }
+
+    if (trailingSLTrigger) {
+        const triggeredExec = strategyData.executions.find(e => e.trailing_sl_triggered);
+        trailingSLTrigger.textContent = triggeredExec ? `₹${triggeredExec.trailing_sl_triggered}` : '--';
+    }
+
+    // Update leg-level SL/TP tracking table
+    const legRiskTracking = document.getElementById('legRiskTracking');
+    const legRiskTableBody = document.getElementById('legRiskTableBody');
+
+    if (legRiskTracking && legRiskTableBody && strategyData.executions.length > 0) {
+        // Show the table if there are executions
+        legRiskTracking.classList.remove('hidden');
+
+        // Check if any execution has SL or TP configured
+        const hasLegRisk = strategyData.executions.some(e => e.sl_price || e.tp_price);
+
+        if (hasLegRisk) {
+            let tableHtml = '';
+            strategyData.executions.forEach(exec => {
+                const slClass = exec.sl_hit ? 'text-error font-bold animate-pulse' : 'text-error';
+                const tpClass = exec.tp_hit ? 'text-success font-bold animate-pulse' : 'text-success';
+
+                tableHtml += `
+                    <tr>
+                        <td><span class="badge badge-primary badge-xs">${exec.leg_number || '-'}</span></td>
+                        <td class="text-xs font-mono">${exec.symbol ? exec.symbol.slice(-10) : '--'}</td>
+                        <td class="font-mono">${exec.last_price ? exec.last_price.toFixed(2) : '--'}</td>
+                        <td class="font-mono ${slClass}">${exec.sl_price ? exec.sl_price.toFixed(2) : 'N/A'}</td>
+                        <td class="text-xs ${exec.sl_hit ? 'text-error font-bold' : ''}">
+                            ${exec.sl_distance !== null ? (exec.sl_distance >= 0 ? exec.sl_distance.toFixed(1) + ' pts' : 'HIT!') : '--'}
+                        </td>
+                        <td class="font-mono ${tpClass}">${exec.tp_price ? exec.tp_price.toFixed(2) : 'N/A'}</td>
+                        <td class="text-xs ${exec.tp_hit ? 'text-success font-bold' : ''}">
+                            ${exec.tp_distance !== null ? (exec.tp_distance >= 0 ? exec.tp_distance.toFixed(1) + ' pts' : 'HIT!') : '--'}
+                        </td>
+                    </tr>
+                `;
+            });
+            legRiskTableBody.innerHTML = tableHtml;
+        } else {
+            legRiskTracking.classList.add('hidden');
+        }
+    } else if (legRiskTracking) {
+        legRiskTracking.classList.add('hidden');
+    }
+
+    // Update last update time
+    const lastUpdateEl = document.getElementById('riskLastUpdate');
+    if (lastUpdateEl) {
+        lastUpdateEl.textContent = new Date().toLocaleTimeString();
+    }
+}
+
+// Start risk status stream when page loads
+if (strategyIdForRisk && document.getElementById('riskStatusSection')) {
+    document.addEventListener('DOMContentLoaded', function() {
+        startRiskStatusStream();
+    });
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', function() {
+        if (riskEventSource) {
+            riskEventSource.close();
+        }
+    });
 }
 
 async function loadOrderbook(strategyId) {

@@ -1,0 +1,445 @@
+{% extends "layout.html" %}
+
+{% block title %}Risk Monitor - AlgoMirror{% endblock %}
+
+{% block page_title %}Risk Monitor{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <div>
+            <h1 class="text-3xl font-bold">Risk Monitor</h1>
+            <p class="text-base-content/70 mt-1">
+                Real-time monitoring of strategy stoploss and target levels
+            </p>
+        </div>
+
+        <div class="flex gap-2 items-center">
+            <!-- Connection Status -->
+            <div class="badge badge-lg gap-2" id="connectionStatus">
+                <span class="loading loading-spinner loading-xs"></span>
+                Connecting...
+            </div>
+
+            <button onclick="location.reload()" class="btn btn-primary btn-sm h-9">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    {% if active_strategies %}
+    <!-- Summary Stats -->
+    <div class="stats shadow w-full">
+        <div class="stat">
+            <div class="stat-title">Active Strategies</div>
+            <div class="stat-value" id="activeStrategiesCount">{{ active_strategies|length }}</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-title">Total Positions</div>
+            <div class="stat-value" id="totalPositions">{{ total_positions }}</div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-title">Total Unrealized P&L</div>
+            <div class="stat-value" id="totalPnl">
+                <span class="{{ 'text-success' if total_pnl >= 0 else 'text-error' }}">
+                    {{ "%.2f"|format(total_pnl) }}
+                </span>
+            </div>
+        </div>
+
+        <div class="stat">
+            <div class="stat-title">Last Update</div>
+            <div class="stat-value text-sm" id="lastUpdate">--:--:--</div>
+        </div>
+    </div>
+
+    <!-- Strategy Cards -->
+    <div id="strategiesContainer" class="space-y-4">
+        {% for item in active_strategies %}
+        {% set strategy = item.strategy %}
+        {% set executions = item.executions %}
+
+        <div class="card bg-base-100 shadow-xl" data-strategy-id="{{ strategy.id }}">
+            <div class="card-body">
+                <!-- Strategy Header -->
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h2 class="card-title">
+                            {{ strategy.name }}
+                            {% if strategy.risk_monitoring_enabled %}
+                            <span class="badge badge-success badge-sm">Monitoring</span>
+                            {% else %}
+                            <span class="badge badge-warning badge-sm">Inactive</span>
+                            {% endif %}
+                        </h2>
+                        <p class="text-sm text-base-content/70">
+                            {{ executions|length }} position(s) |
+                            Total Qty: {{ item.total_quantity }}
+                        </p>
+                    </div>
+
+                    <div class="text-right">
+                        <div class="text-2xl font-bold {{ 'text-success' if item.total_unrealized_pnl >= 0 else 'text-error' }}" id="strategyPnl-{{ strategy.id }}">
+                            {{ "%.2f"|format(item.total_unrealized_pnl) }}
+                        </div>
+                        <div class="text-sm text-base-content/70">Unrealized P&L</div>
+                    </div>
+                </div>
+
+                <!-- Risk Thresholds -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                    <!-- Max Loss Progress -->
+                    {% if strategy.max_loss %}
+                    <div class="bg-base-200 rounded-lg p-3">
+                        <div class="flex justify-between text-sm mb-1">
+                            <span>Max Loss</span>
+                            <span class="font-mono">{{ strategy.max_loss }}</span>
+                        </div>
+                        <progress class="progress progress-error w-full" id="maxLossProgress-{{ strategy.id }}" value="0" max="100"></progress>
+                        <div class="text-xs text-right mt-1" id="maxLossPct-{{ strategy.id }}">0%</div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Max Profit Progress -->
+                    {% if strategy.max_profit %}
+                    <div class="bg-base-200 rounded-lg p-3">
+                        <div class="flex justify-between text-sm mb-1">
+                            <span>Max Profit</span>
+                            <span class="font-mono">{{ strategy.max_profit }}</span>
+                        </div>
+                        <progress class="progress progress-success w-full" id="maxProfitProgress-{{ strategy.id }}" value="0" max="100"></progress>
+                        <div class="text-xs text-right mt-1" id="maxProfitPct-{{ strategy.id }}">0%</div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Trailing SL -->
+                    {% if strategy.trailing_sl %}
+                    <div class="bg-base-200 rounded-lg p-3">
+                        <div class="flex justify-between text-sm mb-1">
+                            <span>Trailing SL</span>
+                            <span class="font-mono">{{ strategy.trailing_sl }} {{ strategy.trailing_sl_type or '%' }}</span>
+                        </div>
+                        <div class="badge badge-info badge-sm" id="trailingSL-{{ strategy.id }}">
+                            {{ 'Active' if strategy.auto_exit_on_max_loss else 'Manual' }}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Positions Table -->
+                <div class="overflow-x-auto mt-4">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Action</th>
+                                <th>Qty</th>
+                                <th>Entry</th>
+                                <th>LTP</th>
+                                <th>SL Price</th>
+                                <th>SL Dist</th>
+                                <th>TP Price</th>
+                                <th>TP Dist</th>
+                                <th>P&L</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="executionsTable-{{ strategy.id }}">
+                            {% for execution in executions %}
+                            <tr data-execution-id="{{ execution.id }}">
+                                <td class="font-mono text-sm">{{ execution.symbol }}</td>
+                                <td>
+                                    <span class="badge {{ 'badge-success' if execution.leg.action == 'BUY' else 'badge-error' }} badge-sm">
+                                        {{ execution.leg.action if execution.leg else 'N/A' }}
+                                    </span>
+                                </td>
+                                <td>{{ execution.quantity }}</td>
+                                <td class="font-mono">{{ "%.2f"|format(execution.entry_price or 0) }}</td>
+                                <td class="font-mono" id="ltp-{{ execution.id }}">{{ "%.2f"|format(execution.last_price or 0) }}</td>
+                                <!-- SL Price -->
+                                <td class="font-mono text-error" id="slPrice-{{ execution.id }}">
+                                    {% if execution.leg and execution.leg.stop_loss_value %}
+                                    --
+                                    {% else %}
+                                    <span class="text-base-content/30">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <!-- SL Distance -->
+                                <td id="slDist-{{ execution.id }}">
+                                    {% if execution.leg and execution.leg.stop_loss_value %}
+                                    <span class="text-xs">--</span>
+                                    {% else %}
+                                    <span class="text-base-content/30">--</span>
+                                    {% endif %}
+                                </td>
+                                <!-- TP Price -->
+                                <td class="font-mono text-success" id="tpPrice-{{ execution.id }}">
+                                    {% if execution.leg and execution.leg.take_profit_value %}
+                                    --
+                                    {% else %}
+                                    <span class="text-base-content/30">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <!-- TP Distance -->
+                                <td id="tpDist-{{ execution.id }}">
+                                    {% if execution.leg and execution.leg.take_profit_value %}
+                                    <span class="text-xs">--</span>
+                                    {% else %}
+                                    <span class="text-base-content/30">--</span>
+                                    {% endif %}
+                                </td>
+                                <td class="{{ 'text-success' if (execution.unrealized_pnl or 0) >= 0 else 'text-error' }}" id="pnl-{{ execution.id }}">
+                                    {{ "%.2f"|format(execution.unrealized_pnl or 0) }}
+                                </td>
+                                <td>
+                                    {% if execution.websocket_subscribed %}
+                                    <span class="badge badge-success badge-xs">Live</span>
+                                    {% else %}
+                                    <span class="badge badge-ghost badge-xs">Offline</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Auto Exit Settings -->
+                <div class="flex gap-2 mt-4">
+                    {% if strategy.auto_exit_on_max_loss %}
+                    <span class="badge badge-outline badge-error badge-sm">Auto Exit on Max Loss</span>
+                    {% endif %}
+                    {% if strategy.auto_exit_on_max_profit %}
+                    <span class="badge badge-outline badge-success badge-sm">Auto Exit on Max Profit</span>
+                    {% endif %}
+                    {% if strategy.supertrend_exit_enabled %}
+                    <span class="badge badge-outline badge-info badge-sm">Supertrend Exit</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Risk Events Log -->
+    {% if recent_events %}
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title">Recent Risk Events</h2>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Strategy</th>
+                            <th>Event</th>
+                            <th>Message</th>
+                            <th>P&L</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="riskEventsTable">
+                        {% for event in recent_events %}
+                        <tr>
+                            <td class="text-xs">{{ event.triggered_at.strftime('%Y-%m-%d %H:%M:%S') if event.triggered_at else '--' }}</td>
+                            <td>{{ event.strategy.name if event.strategy else 'Unknown' }}</td>
+                            <td>
+                                <span class="badge badge-sm
+                                    {% if 'loss' in event.event_type %}badge-error
+                                    {% elif 'profit' in event.event_type %}badge-success
+                                    {% else %}badge-warning{% endif %}">
+                                    {{ event.event_type }}
+                                </span>
+                            </td>
+                            <td class="text-sm">{{ event.message }}</td>
+                            <td class="font-mono">{{ "%.2f"|format(event.pnl_at_trigger or 0) }}</td>
+                            <td class="text-sm">{{ event.action_taken or '--' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <!-- No Active Strategies -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body text-center py-12">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto text-base-content/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            <h3 class="text-xl font-semibold mt-4">No Active Risk Monitoring</h3>
+            <p class="text-base-content/70 mt-2">
+                There are no strategies with open positions being monitored.<br>
+                Execute a strategy to start tracking risk levels.
+            </p>
+            <div class="mt-4">
+                <a href="{{ url_for('strategy.dashboard') }}" class="btn btn-primary">
+                    View Strategies
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let eventSource = null;
+
+function updateConnectionStatus(status, message) {
+    const statusEl = document.getElementById('connectionStatus');
+    statusEl.innerHTML = message;
+    statusEl.className = `badge badge-lg gap-2 ${status}`;
+}
+
+function startRealTimeUpdates() {
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    eventSource = new EventSource('/trading/api/risk-status/stream');
+
+    eventSource.onopen = function() {
+        updateConnectionStatus('badge-success', '<span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-success"></span></span> Live');
+    };
+
+    eventSource.onmessage = function(event) {
+        try {
+            const response = JSON.parse(event.data);
+            if (response.status === 'success') {
+                updateRiskData(response.data);
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+            }
+        } catch (e) {
+            console.error('Error parsing SSE data:', e);
+        }
+    };
+
+    eventSource.onerror = function(error) {
+        updateConnectionStatus('badge-error', 'Disconnected');
+        setTimeout(() => startRealTimeUpdates(), 5000);
+    };
+}
+
+function updateRiskData(data) {
+    let totalPnl = 0;
+    let totalPositions = 0;
+
+    data.forEach(strategy => {
+        totalPnl += strategy.total_pnl || 0;
+        totalPositions += strategy.executions.length;
+
+        // Update strategy P&L
+        const pnlEl = document.getElementById(`strategyPnl-${strategy.strategy_id}`);
+        if (pnlEl) {
+            pnlEl.textContent = strategy.total_pnl.toFixed(2);
+            pnlEl.className = `text-2xl font-bold ${strategy.total_pnl >= 0 ? 'text-success' : 'text-error'}`;
+        }
+
+        // Update max loss progress
+        const maxLossProgress = document.getElementById(`maxLossProgress-${strategy.strategy_id}`);
+        const maxLossPct = document.getElementById(`maxLossPct-${strategy.strategy_id}`);
+        if (maxLossProgress && maxLossPct) {
+            maxLossProgress.value = strategy.max_loss_pct;
+            maxLossPct.textContent = `${strategy.max_loss_pct}%`;
+
+            // Change color based on risk level
+            if (strategy.max_loss_pct >= 80) {
+                maxLossProgress.classList.add('progress-error');
+            } else if (strategy.max_loss_pct >= 50) {
+                maxLossProgress.classList.add('progress-warning');
+            }
+        }
+
+        // Update max profit progress
+        const maxProfitProgress = document.getElementById(`maxProfitProgress-${strategy.strategy_id}`);
+        const maxProfitPct = document.getElementById(`maxProfitPct-${strategy.strategy_id}`);
+        if (maxProfitProgress && maxProfitPct) {
+            maxProfitProgress.value = strategy.max_profit_pct;
+            maxProfitPct.textContent = `${strategy.max_profit_pct}%`;
+        }
+
+        // Update individual executions
+        strategy.executions.forEach(execution => {
+            const ltpEl = document.getElementById(`ltp-${execution.id}`);
+            const pnlEl = document.getElementById(`pnl-${execution.id}`);
+            const slPriceEl = document.getElementById(`slPrice-${execution.id}`);
+            const slDistEl = document.getElementById(`slDist-${execution.id}`);
+            const tpPriceEl = document.getElementById(`tpPrice-${execution.id}`);
+            const tpDistEl = document.getElementById(`tpDist-${execution.id}`);
+
+            if (ltpEl && execution.last_price) {
+                const oldValue = parseFloat(ltpEl.textContent);
+                const newValue = execution.last_price;
+                ltpEl.textContent = newValue.toFixed(2);
+
+                // Flash animation for price change
+                if (oldValue !== newValue) {
+                    ltpEl.classList.add('animate-pulse');
+                    setTimeout(() => ltpEl.classList.remove('animate-pulse'), 1000);
+                }
+            }
+
+            if (pnlEl && execution.unrealized_pnl !== null) {
+                pnlEl.textContent = execution.unrealized_pnl.toFixed(2);
+                pnlEl.className = execution.unrealized_pnl >= 0 ? 'text-success' : 'text-error';
+            }
+
+            // Update SL Price and Distance
+            if (slPriceEl && execution.sl_price) {
+                slPriceEl.textContent = execution.sl_price.toFixed(2);
+                slPriceEl.className = execution.sl_hit ? 'font-mono text-error animate-pulse' : 'font-mono text-error';
+            }
+            if (slDistEl && execution.sl_distance !== null) {
+                const distText = execution.sl_distance >= 0
+                    ? `${execution.sl_distance.toFixed(1)} pts`
+                    : `<span class="text-error font-bold">HIT!</span>`;
+                slDistEl.innerHTML = `<span class="text-xs ${execution.sl_hit ? 'text-error font-bold' : ''}">${distText}</span>`;
+            }
+
+            // Update TP Price and Distance
+            if (tpPriceEl && execution.tp_price) {
+                tpPriceEl.textContent = execution.tp_price.toFixed(2);
+                tpPriceEl.className = execution.tp_hit ? 'font-mono text-success animate-pulse' : 'font-mono text-success';
+            }
+            if (tpDistEl && execution.tp_distance !== null) {
+                const distText = execution.tp_distance >= 0
+                    ? `${execution.tp_distance.toFixed(1)} pts`
+                    : `<span class="text-success font-bold">HIT!</span>`;
+                tpDistEl.innerHTML = `<span class="text-xs ${execution.tp_hit ? 'text-success font-bold' : ''}">${distText}</span>`;
+            }
+        });
+    });
+
+    // Update totals
+    const totalPnlEl = document.getElementById('totalPnl');
+    if (totalPnlEl) {
+        totalPnlEl.innerHTML = `<span class="${totalPnl >= 0 ? 'text-success' : 'text-error'}">${totalPnl.toFixed(2)}</span>`;
+    }
+
+    document.getElementById('totalPositions').textContent = totalPositions;
+}
+
+// Start real-time updates when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    startRealTimeUpdates();
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    if (eventSource) {
+        eventSource.close();
+    }
+});
+</script>
+{% endblock %}

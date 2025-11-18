@@ -1179,3 +1179,573 @@ def destroy_option_chain_session():
             'status': 'error',
             'message': str(e)
         }), 500
+
+
+# =============================================================================
+# RISK MONITOR ROUTES
+# =============================================================================
+
+@trading_bp.route('/risk-monitor')
+@login_required
+def risk_monitor():
+    """Risk Monitor page showing active strategies with stoploss/target tracking"""
+    from app.models import Strategy, StrategyExecution, RiskEvent
+
+    # Get all active strategies with open positions for current user
+    strategies = Strategy.query.filter_by(
+        user_id=current_user.id,
+        is_active=True
+    ).all()
+
+    # Filter to only strategies with open positions
+    active_strategies = []
+    for strategy in strategies:
+        open_executions = StrategyExecution.query.filter_by(
+            strategy_id=strategy.id,
+            status='entered'
+        ).all()
+
+        if open_executions:
+            active_strategies.append({
+                'strategy': strategy,
+                'executions': open_executions,
+                'total_unrealized_pnl': sum(e.unrealized_pnl or 0 for e in open_executions),
+                'total_quantity': sum(e.quantity or 0 for e in open_executions)
+            })
+
+    # Get recent risk events
+    recent_events = RiskEvent.query.filter(
+        RiskEvent.strategy_id.in_([s['strategy'].id for s in active_strategies])
+    ).order_by(RiskEvent.triggered_at.desc()).limit(20).all() if active_strategies else []
+
+    # Calculate totals
+    total_positions = sum(len(s['executions']) for s in active_strategies)
+    total_pnl = sum(s['total_unrealized_pnl'] for s in active_strategies)
+
+    return render_template('trading/risk_monitor.html',
+                         active_strategies=active_strategies,
+                         recent_events=recent_events,
+                         total_positions=total_positions,
+                         total_pnl=total_pnl)
+
+
+@trading_bp.route('/api/risk-status')
+@login_required
+def get_risk_status():
+    """API endpoint to get current risk monitoring status for all active strategies"""
+    from app.models import Strategy, StrategyExecution, RiskEvent
+    from app.utils.background_service import option_chain_service
+    import re
+
+    def get_ltp_from_option_chain(symbol, exchange):
+        """Parse symbol and fetch LTP from option chain service."""
+        try:
+            current_app.logger.debug(f"[RiskMonitor] Parsing symbol: {symbol}")
+            match = re.match(r'^(NIFTY|BANKNIFTY|SENSEX|FINNIFTY|MIDCPNIFTY)(\d{1,2}[A-Z]{3}\d{2})(\d+)(CE|PE)$', symbol)
+            if not match:
+                current_app.logger.warning(f"[RiskMonitor] Symbol {symbol} did not match regex pattern")
+                return None
+
+            underlying = match.group(1)
+            strike = int(match.group(3))
+            option_type = match.group(4)
+            current_app.logger.debug(f"[RiskMonitor] Parsed: underlying={underlying}, strike={strike}, type={option_type}")
+
+            active_keys = list(option_chain_service.active_managers.keys())
+            current_app.logger.debug(f"[RiskMonitor] Active managers: {active_keys}")
+
+            for key in active_keys:
+                if key.startswith(f"{underlying}_"):
+                    manager = option_chain_service.active_managers[key]
+                    chain_data = manager.get_option_chain()
+
+                    if chain_data and chain_data.get('status') == 'success':
+                        strikes = chain_data.get('strikes', [])
+                        current_app.logger.debug(f"[RiskMonitor] Found {len(strikes)} strikes in chain")
+                        for strike_data in strikes:
+                            if strike_data.get('strike') == strike:
+                                ltp = strike_data.get('ce_ltp', 0) if option_type == 'CE' else strike_data.get('pe_ltp', 0)
+                                current_app.logger.debug(f"[RiskMonitor] Found LTP for {symbol}: {ltp}")
+                                return ltp
+                        current_app.logger.warning(f"[RiskMonitor] Strike {strike} not found in chain. Available: {[s.get('strike') for s in strikes[:5]]}...")
+                    else:
+                        current_app.logger.warning(f"[RiskMonitor] Chain data not available for {key}")
+                    break
+            else:
+                current_app.logger.warning(f"[RiskMonitor] No active manager found for {underlying}")
+
+            return None
+        except Exception as e:
+            current_app.logger.error(f"[RiskMonitor] Error getting LTP from option chain: {e}")
+            return None
+
+    try:
+        # Get all active strategies with monitoring enabled
+        strategies = Strategy.query.filter_by(
+            user_id=current_user.id,
+            is_active=True,
+            risk_monitoring_enabled=True
+        ).all()
+
+        risk_data = []
+
+        for strategy in strategies:
+            # Get open positions for this strategy
+            open_executions = StrategyExecution.query.filter_by(
+                strategy_id=strategy.id,
+                status='entered'
+            ).all()
+
+            if not open_executions:
+                continue
+
+            # Calculate totals - will be recalculated with real-time LTP
+            total_unrealized_pnl = 0
+            total_realized_pnl = sum(e.realized_pnl or 0 for e in open_executions)
+
+            # Build execution details
+            executions_data = []
+            for execution in open_executions:
+                leg = execution.leg
+                entry_price = execution.entry_price or 0
+                action = leg.action if leg else 'BUY'
+
+                # Get real-time LTP from option chain service
+                real_time_ltp = get_ltp_from_option_chain(execution.symbol, execution.exchange)
+                last_price = real_time_ltp if real_time_ltp else (execution.last_price or 0)
+
+                # Calculate unrealized P&L with real-time LTP
+                if last_price > 0 and entry_price > 0:
+                    if action == 'BUY':
+                        unrealized_pnl = (last_price - entry_price) * execution.quantity
+                    else:  # SELL
+                        unrealized_pnl = (entry_price - last_price) * execution.quantity
+                else:
+                    unrealized_pnl = execution.unrealized_pnl or 0
+
+                total_unrealized_pnl += unrealized_pnl
+                is_connected = real_time_ltp is not None
+
+                # Calculate leg-level SL/TP prices and distances
+                sl_price = None
+                sl_distance = None
+                sl_distance_pct = None
+                sl_hit = False
+
+                tp_price = None
+                tp_distance = None
+                tp_distance_pct = None
+                tp_hit = False
+
+                if leg and entry_price > 0:
+                    # Calculate Stop Loss price
+                    if leg.stop_loss_value and leg.stop_loss_value > 0:
+                        if leg.stop_loss_type == 'percentage':
+                            if action == 'BUY':
+                                sl_price = entry_price * (1 - leg.stop_loss_value / 100)
+                            else:  # SELL
+                                sl_price = entry_price * (1 + leg.stop_loss_value / 100)
+                        elif leg.stop_loss_type == 'points':
+                            if action == 'BUY':
+                                sl_price = entry_price - leg.stop_loss_value
+                            else:  # SELL
+                                sl_price = entry_price + leg.stop_loss_value
+                        elif leg.stop_loss_type == 'premium':
+                            sl_price = leg.stop_loss_value
+
+                        # Calculate distance to SL
+                        if sl_price and last_price > 0:
+                            if action == 'BUY':
+                                sl_distance = last_price - sl_price
+                                sl_hit = last_price <= sl_price
+                            else:  # SELL
+                                sl_distance = sl_price - last_price
+                                sl_hit = last_price >= sl_price
+                            sl_distance_pct = (sl_distance / entry_price) * 100 if entry_price > 0 else 0
+
+                    # Calculate Take Profit price
+                    if leg.take_profit_value and leg.take_profit_value > 0:
+                        if leg.take_profit_type == 'percentage':
+                            if action == 'BUY':
+                                tp_price = entry_price * (1 + leg.take_profit_value / 100)
+                            else:  # SELL
+                                tp_price = entry_price * (1 - leg.take_profit_value / 100)
+                        elif leg.take_profit_type == 'points':
+                            if action == 'BUY':
+                                tp_price = entry_price + leg.take_profit_value
+                            else:  # SELL
+                                tp_price = entry_price - leg.take_profit_value
+                        elif leg.take_profit_type == 'premium':
+                            tp_price = leg.take_profit_value
+
+                        # Calculate distance to TP
+                        if tp_price and last_price > 0:
+                            if action == 'BUY':
+                                tp_distance = tp_price - last_price
+                                tp_hit = last_price >= tp_price
+                            else:  # SELL
+                                tp_distance = last_price - tp_price
+                                tp_hit = last_price <= tp_price
+                            tp_distance_pct = (tp_distance / entry_price) * 100 if entry_price > 0 else 0
+
+                executions_data.append({
+                    'id': execution.id,
+                    'symbol': execution.symbol,
+                    'exchange': execution.exchange,
+                    'entry_price': entry_price,
+                    'last_price': last_price,
+                    'quantity': execution.quantity,
+                    'unrealized_pnl': round(unrealized_pnl, 2),
+                    'realized_pnl': execution.realized_pnl,
+                    'last_updated': datetime.utcnow().isoformat() if is_connected else None,
+                    'websocket_subscribed': is_connected,
+                    'trailing_sl_triggered': execution.trailing_sl_triggered,
+                    'action': action,
+                    'account_name': execution.account.account_name if execution.account else 'Unknown',
+                    'leg_number': leg.leg_number if leg else 0,
+                    # Leg-level SL data
+                    'sl_type': leg.stop_loss_type if leg else None,
+                    'sl_value': leg.stop_loss_value if leg else None,
+                    'sl_price': round(sl_price, 2) if sl_price else None,
+                    'sl_distance': round(sl_distance, 2) if sl_distance else None,
+                    'sl_distance_pct': round(sl_distance_pct, 2) if sl_distance_pct else None,
+                    'sl_hit': sl_hit,
+                    # Leg-level TP data
+                    'tp_type': leg.take_profit_type if leg else None,
+                    'tp_value': leg.take_profit_value if leg else None,
+                    'tp_price': round(tp_price, 2) if tp_price else None,
+                    'tp_distance': round(tp_distance, 2) if tp_distance else None,
+                    'tp_distance_pct': round(tp_distance_pct, 2) if tp_distance_pct else None,
+                    'tp_hit': tp_hit,
+                    # Trailing SL
+                    'trailing_enabled': leg.enable_trailing if leg else False,
+                    'trailing_type': leg.trailing_type if leg else None,
+                    'trailing_value': leg.trailing_value if leg else None
+                })
+
+            # Calculate total P&L
+            total_pnl = total_unrealized_pnl + total_realized_pnl
+
+            # Calculate risk percentages
+            max_loss_pct = 0
+            max_profit_pct = 0
+
+            if strategy.max_loss and strategy.max_loss != 0:
+                max_loss_pct = min(100, (abs(total_pnl) / abs(strategy.max_loss)) * 100) if total_pnl < 0 else 0
+
+            if strategy.max_profit and strategy.max_profit != 0:
+                max_profit_pct = min(100, (total_pnl / strategy.max_profit) * 100) if total_pnl > 0 else 0
+
+            risk_data.append({
+                'strategy_id': strategy.id,
+                'strategy_name': strategy.name,
+                'risk_monitoring_enabled': strategy.risk_monitoring_enabled,
+                'max_loss': strategy.max_loss,
+                'max_profit': strategy.max_profit,
+                'trailing_sl': strategy.trailing_sl,
+                'trailing_sl_type': strategy.trailing_sl_type,
+                'auto_exit_on_max_loss': strategy.auto_exit_on_max_loss,
+                'auto_exit_on_max_profit': strategy.auto_exit_on_max_profit,
+                'total_unrealized_pnl': round(total_unrealized_pnl, 2),
+                'total_realized_pnl': round(total_realized_pnl, 2),
+                'total_pnl': round(total_pnl, 2),
+                'max_loss_pct': round(max_loss_pct, 1),
+                'max_profit_pct': round(max_profit_pct, 1),
+                'executions': executions_data,
+                'supertrend_exit_enabled': strategy.supertrend_exit_enabled,
+                'supertrend_exit_triggered': strategy.supertrend_exit_triggered
+            })
+
+        return jsonify({
+            'status': 'success',
+            'data': risk_data,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+
+    except Exception as e:
+        current_app.logger.error(f'Error getting risk status: {e}')
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@trading_bp.route('/api/risk-status/stream')
+@login_required
+def risk_status_stream():
+    """SSE endpoint for real-time risk monitoring updates"""
+    from app.models import Strategy, StrategyExecution
+    from app.utils.background_service import option_chain_service
+    import re
+
+    current_app.logger.info(f"[RiskMonitorSSE] Stream requested by user {current_user.id}")
+
+    # Ensure position monitor is running for real-time LTP updates
+    if not option_chain_service.position_monitor_running:
+        current_app.logger.info("[RiskMonitorSSE] Starting position monitor for real-time LTP")
+        option_chain_service.start_position_monitor()
+
+    # Capture context before entering generator (request/app context not available in generator)
+    user_id = current_user.id
+    app = current_app._get_current_object()
+
+    def get_ltp_from_option_chain(symbol, exchange):
+        """
+        Parse symbol and fetch LTP from option chain service.
+        Symbol format: NIFTY18NOV2525950CE or BANKNIFTY18NOV2550000PE
+        """
+        try:
+            # Parse symbol to extract underlying, strike, and option type
+            # Pattern: UNDERLYING + DATE + STRIKE + OPTION_TYPE
+            match = re.match(r'^(NIFTY|BANKNIFTY|SENSEX|FINNIFTY|MIDCPNIFTY)(\d{1,2}[A-Z]{3}\d{2})(\d+)(CE|PE)$', symbol)
+            if not match:
+                return None
+
+            underlying = match.group(1)
+            strike = int(match.group(3))
+            option_type = match.group(4)
+
+            # Find the option chain manager for this underlying
+            for key in option_chain_service.active_managers.keys():
+                if key.startswith(f"{underlying}_"):
+                    manager = option_chain_service.active_managers[key]
+                    chain_data = manager.get_option_chain()
+
+                    if chain_data and chain_data.get('status') == 'success':
+                        strikes = chain_data.get('strikes', [])
+                        for strike_data in strikes:
+                            if strike_data.get('strike') == strike:
+                                if option_type == 'CE':
+                                    return strike_data.get('ce_ltp', 0)
+                                else:
+                                    return strike_data.get('pe_ltp', 0)
+                    break
+
+            return None
+        except Exception as e:
+            return None
+
+    def generate():
+        import traceback
+        while True:
+            try:
+                # Use app context for database operations
+                with app.app_context():
+                    # Get all active strategies with monitoring enabled
+                    strategies = Strategy.query.filter_by(
+                        user_id=user_id,
+                        is_active=True,
+                        risk_monitoring_enabled=True
+                    ).all()
+
+                    risk_data = []
+
+                    for strategy in strategies:
+                        # Get open positions for this strategy
+                        open_executions = StrategyExecution.query.filter_by(
+                            strategy_id=strategy.id,
+                            status='entered'
+                        ).all()
+
+                        if not open_executions:
+                            continue
+
+                        # Calculate totals - will be recalculated with real-time LTP
+                        total_unrealized_pnl = 0
+                        total_realized_pnl = sum(e.realized_pnl or 0 for e in open_executions)
+
+                        # Build execution details with leg-level SL/TP
+                        executions_data = []
+                        for execution in open_executions:
+                            leg = execution.leg
+                            entry_price = execution.entry_price or 0
+                            action = leg.action if leg else 'BUY'
+
+                            # Determine price source and LTP
+                            # Priority: WebSocket-updated last_price > option chain > calculated
+                            price_source = 'offline'
+                            last_price = 0
+
+                            # Check if execution has fresh WebSocket data
+                            if execution.websocket_subscribed and execution.last_price and execution.last_price > 0:
+                                last_price = execution.last_price
+                                price_source = 'realtime'
+                            elif execution.last_price and execution.last_price > 0:
+                                # Has cached price from database
+                                last_price = execution.last_price
+                                price_source = 'cached'
+                            else:
+                                # Try option chain service
+                                real_time_ltp = get_ltp_from_option_chain(execution.symbol, execution.exchange)
+                                if real_time_ltp:
+                                    last_price = real_time_ltp
+                                    price_source = 'realtime'
+                                elif execution.unrealized_pnl and entry_price > 0 and execution.quantity > 0:
+                                    # Back-calculate LTP from stored unrealized P&L
+                                    if action == 'BUY':
+                                        last_price = entry_price + (execution.unrealized_pnl / execution.quantity)
+                                    else:  # SELL
+                                        last_price = entry_price - (execution.unrealized_pnl / execution.quantity)
+                                    price_source = 'calculated'
+
+                            # Calculate unrealized P&L with LTP
+                            if last_price > 0 and entry_price > 0:
+                                if action == 'BUY':
+                                    unrealized_pnl = (last_price - entry_price) * execution.quantity
+                                else:  # SELL
+                                    unrealized_pnl = (entry_price - last_price) * execution.quantity
+                            else:
+                                unrealized_pnl = execution.unrealized_pnl or 0
+
+                            total_unrealized_pnl += unrealized_pnl
+
+                            # Determine connection status
+                            is_connected = price_source == 'realtime'
+
+                            # Calculate leg-level SL/TP
+                            sl_price = None
+                            sl_distance = None
+                            sl_hit = False
+                            tp_price = None
+                            tp_distance = None
+                            tp_hit = False
+
+                            if leg and entry_price > 0:
+                                # Stop Loss calculation
+                                if leg.stop_loss_value and leg.stop_loss_value > 0:
+                                    if leg.stop_loss_type == 'percentage':
+                                        sl_price = entry_price * (1 - leg.stop_loss_value / 100) if action == 'BUY' else entry_price * (1 + leg.stop_loss_value / 100)
+                                    elif leg.stop_loss_type == 'points':
+                                        sl_price = entry_price - leg.stop_loss_value if action == 'BUY' else entry_price + leg.stop_loss_value
+                                    elif leg.stop_loss_type == 'premium':
+                                        sl_price = leg.stop_loss_value
+
+                                    if sl_price and last_price > 0:
+                                        sl_distance = last_price - sl_price if action == 'BUY' else sl_price - last_price
+                                        sl_hit = last_price <= sl_price if action == 'BUY' else last_price >= sl_price
+
+                                # Take Profit calculation
+                                if leg.take_profit_value and leg.take_profit_value > 0:
+                                    if leg.take_profit_type == 'percentage':
+                                        tp_price = entry_price * (1 + leg.take_profit_value / 100) if action == 'BUY' else entry_price * (1 - leg.take_profit_value / 100)
+                                    elif leg.take_profit_type == 'points':
+                                        tp_price = entry_price + leg.take_profit_value if action == 'BUY' else entry_price - leg.take_profit_value
+                                    elif leg.take_profit_type == 'premium':
+                                        tp_price = leg.take_profit_value
+
+                                    if tp_price and last_price > 0:
+                                        tp_distance = tp_price - last_price if action == 'BUY' else last_price - tp_price
+                                        tp_hit = last_price >= tp_price if action == 'BUY' else last_price <= tp_price
+
+                            executions_data.append({
+                                'id': execution.id,
+                                'symbol': execution.symbol,
+                                'entry_price': entry_price,
+                                'last_price': round(last_price, 2) if last_price else 0,
+                                'quantity': execution.quantity,
+                                'unrealized_pnl': round(unrealized_pnl, 2),
+                                'last_updated': datetime.utcnow().isoformat() if is_connected else None,
+                                'websocket_subscribed': is_connected,
+                                'price_source': price_source,
+                                'action': action,
+                                'leg_number': leg.leg_number if leg else 0,
+                                'sl_price': round(sl_price, 2) if sl_price else None,
+                                'sl_distance': round(sl_distance, 2) if sl_distance else None,
+                                'sl_hit': sl_hit,
+                                'tp_price': round(tp_price, 2) if tp_price else None,
+                                'tp_distance': round(tp_distance, 2) if tp_distance else None,
+                                'tp_hit': tp_hit,
+                                'trailing_sl_triggered': execution.trailing_sl_triggered
+                            })
+
+                        # Calculate total P&L
+                        total_pnl = total_unrealized_pnl + total_realized_pnl
+
+                        # Calculate risk percentages
+                        max_loss_pct = 0
+                        max_profit_pct = 0
+
+                        if strategy.max_loss and strategy.max_loss != 0:
+                            max_loss_pct = min(100, (abs(total_pnl) / abs(strategy.max_loss)) * 100) if total_pnl < 0 else 0
+
+                        if strategy.max_profit and strategy.max_profit != 0:
+                            max_profit_pct = min(100, (total_pnl / strategy.max_profit) * 100) if total_pnl > 0 else 0
+
+                        risk_data.append({
+                            'strategy_id': strategy.id,
+                            'strategy_name': strategy.name,
+                            'max_loss': strategy.max_loss,
+                            'max_profit': strategy.max_profit,
+                            'trailing_sl': strategy.trailing_sl,
+                            'total_pnl': round(total_pnl, 2),
+                            'max_loss_pct': round(max_loss_pct, 1),
+                            'max_profit_pct': round(max_profit_pct, 1),
+                            'executions': executions_data
+                        })
+
+                # Send as SSE
+                data_json = json.dumps({
+                    'status': 'success',
+                    'data': risk_data,
+                    'timestamp': datetime.utcnow().isoformat()
+                })
+                yield f"data: {data_json}\n\n"
+
+                # Update every second
+                time.sleep(1)
+
+            except GeneratorExit:
+                break
+            except Exception as e:
+                error_msg = f"[RiskMonitorSSE ERROR] {str(e)}\n{traceback.format_exc()}"
+                print(error_msg, flush=True)
+                yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+                break
+
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no'
+    response.headers['Connection'] = 'keep-alive'
+    return response
+
+
+@trading_bp.route('/api/risk-events')
+@login_required
+def get_risk_events():
+    """Get recent risk events for user's strategies"""
+    from app.models import Strategy, RiskEvent
+
+    try:
+        # Get user's strategy IDs
+        strategy_ids = [s.id for s in Strategy.query.filter_by(user_id=current_user.id).all()]
+
+        # Get recent events
+        events = RiskEvent.query.filter(
+            RiskEvent.strategy_id.in_(strategy_ids)
+        ).order_by(RiskEvent.triggered_at.desc()).limit(50).all()
+
+        events_data = []
+        for event in events:
+            events_data.append({
+                'id': event.id,
+                'strategy_id': event.strategy_id,
+                'strategy_name': event.strategy.name if event.strategy else 'Unknown',
+                'execution_id': event.execution_id,
+                'event_type': event.event_type,
+                'message': event.message,
+                'triggered_at': event.triggered_at.isoformat() if event.triggered_at else None,
+                'pnl_at_trigger': event.pnl_at_trigger,
+                'action_taken': event.action_taken
+            })
+
+        return jsonify({
+            'status': 'success',
+            'data': events_data
+        })
+
+    except Exception as e:
+        current_app.logger.error(f'Error getting risk events: {e}')
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500

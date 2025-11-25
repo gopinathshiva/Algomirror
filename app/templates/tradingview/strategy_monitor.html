@@ -57,8 +57,9 @@
                     <div class="stat-title">Timeframe</div>
                     <div class="stat-value text-lg">
                         <select id="intervalSelect" class="select select-bordered select-sm">
-                            <option value="1m" {% if strategy.supertrend_timeframe == '1m' %}selected{% endif %}>1 Min</option>
+                            <option value="3m" {% if strategy.supertrend_timeframe == '3m' %}selected{% endif %}>3 Min</option>
                             <option value="5m" {% if not strategy.supertrend_timeframe or strategy.supertrend_timeframe == '5m' %}selected{% endif %}>5 Min</option>
+                            <option value="10m" {% if strategy.supertrend_timeframe == '10m' %}selected{% endif %}>10 Min</option>
                             <option value="15m" {% if strategy.supertrend_timeframe == '15m' %}selected{% endif %}>15 Min</option>
                         </select>
                     </div>

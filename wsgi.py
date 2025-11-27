@@ -1,7 +1,10 @@
 # CRITICAL: Monkey patch MUST be first, before any other imports
 # This fixes the "RLock(s) were not greened" warning and prevents blocking
-import eventlet
-eventlet.monkey_patch()
+# Only use eventlet on Linux (production) - Windows doesn't support it properly
+import platform
+if platform.system() != 'Windows':
+    import eventlet
+    eventlet.monkey_patch()
 
 from app import create_app
 

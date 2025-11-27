@@ -1,13 +1,18 @@
 """
 Background Order Status Polling Service
 Checks pending orders every 2 seconds and updates database without blocking order placement
+
+Cross-platform: Uses eventlet on Linux, threading on Windows
 """
 
-import threading
-import time
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Dict
+
+# Cross-platform compatibility
+from app.utils.compat import sleep, spawn, create_lock, IS_WINDOWS
+
 from app import db
 from app.models import StrategyExecution
 from app.utils.openalgo_client import ExtendedOpenAlgoAPI
@@ -28,7 +33,7 @@ class OrderStatusPoller:
     """
 
     _instance = None
-    _lock = threading.Lock()
+    _lock = threading.Lock()  # Use threading.Lock for singleton pattern (works on both platforms)
 
     def __new__(cls):
         if cls._instance is None:
@@ -53,15 +58,25 @@ class OrderStatusPoller:
         """Start the background polling service"""
         if not self.is_running:
             self.is_running = True
-            self.poller_thread = threading.Thread(target=self._poll_loop, daemon=True, name="OrderStatusPoller")
-            self.poller_thread.start()
+            # Spawn background task (greenlet on Linux, thread on Windows)
+            if IS_WINDOWS:
+                self.poller_thread = threading.Thread(target=self._poll_loop, daemon=True, name="OrderStatusPoller")
+                self.poller_thread.start()
+            else:
+                self.poller_thread = spawn(self._poll_loop)
             logger.info("[STARTED] Order Status Poller started")
 
     def stop(self):
         """Stop the background polling service"""
         self.is_running = False
         if self.poller_thread:
-            self.poller_thread.join(timeout=5)
+            try:
+                if IS_WINDOWS:
+                    self.poller_thread.join(timeout=5)
+                else:
+                    self.poller_thread.kill()  # Kill eventlet greenlet
+            except Exception:
+                pass
         logger.info("[STOPPED] Order Status Poller stopped")
 
     def add_order(self, execution_id: int, account, order_id: str, strategy_name: str):
@@ -91,7 +106,7 @@ class OrderStatusPoller:
             return False
 
     def _poll_loop(self):
-        """Main polling loop - runs in background thread"""
+        """Main polling loop - runs in background"""
         from app import create_app
         app = create_app()
 
@@ -103,7 +118,7 @@ class OrderStatusPoller:
                         orders_to_check = dict(self.pending_orders)
 
                     if not orders_to_check:
-                        time.sleep(2)  # Wait 2 seconds if no orders
+                        sleep(2)  # Wait 2 seconds if no orders
                         continue
 
                     logger.debug(f"[POLLING] Checking {len(orders_to_check)} pending orders")
@@ -113,11 +128,11 @@ class OrderStatusPoller:
                         self._check_order_status(execution_id, order_info, app)
 
                     # Wait 2 seconds before next polling cycle
-                    time.sleep(2)
+                    sleep(2)
 
                 except Exception as e:
                     logger.error(f"[ERROR] Error in polling loop: {e}", exc_info=True)
-                    time.sleep(5)  # Wait longer on error
+                    sleep(5)  # Wait longer on error
 
     def _check_order_status(self, execution_id: int, order_info: Dict, app):
         """Check status of a single order"""
@@ -169,7 +184,7 @@ class OrderStatusPoller:
                         # Some brokers return complete status before average_price is populated
                         if not avg_price or avg_price == 0:
                             logger.warning(f"[PRICE MISSING] Order {order_id} complete but average_price is {avg_price}, waiting 3s to re-fetch...")
-                            time.sleep(3)
+                            sleep(3)
 
                             # Re-fetch order status after delay (respecting rate limit)
                             retry_response = client.orderstatus(order_id=order_id, strategy=strategy_name)

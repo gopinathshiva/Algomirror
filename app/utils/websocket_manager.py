@@ -1,17 +1,21 @@
 """
 Professional WebSocket Manager with Account Failover
 Handles real-time data streaming with enterprise-grade reliability
+
+Cross-platform: Uses eventlet on Linux, threading on Windows
 """
 
 import json
-import threading
-import time
 import logging
+import threading
 from datetime import datetime, timedelta
 from collections import deque
 from typing import Dict, List, Optional, Any
 import websocket
 import pytz
+
+# Cross-platform compatibility
+from app.utils.compat import sleep, spawn, create_lock, IS_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +116,7 @@ class ProfessionalWebSocketManager:
         self.ws = None
         self.ws_thread = None
         self.reconnect_thread = None
-        self._lock = threading.Lock()
+        self._lock = create_lock()
     
     def create_connection_pool(self, primary_account, backup_accounts=None):
         """
@@ -166,7 +170,7 @@ class ProfessionalWebSocketManager:
             self.api_key = api_key
             self.authenticated = False
             self.connection_failed = False
-            
+
             # Create WebSocket connection (no header auth - uses message auth)
             self.ws = websocket.WebSocketApp(
                 ws_url,
@@ -175,24 +179,26 @@ class ProfessionalWebSocketManager:
                 on_error=self.on_error,
                 on_close=self.on_close
             )
-            
-            # Start WebSocket in separate thread
-            self.ws_thread = threading.Thread(target=self.ws.run_forever)
-            self.ws_thread.daemon = True
-            self.ws_thread.start()
-            
+
+            # Start WebSocket in background (greenlet on Linux, thread on Windows)
+            if IS_WINDOWS:
+                self.ws_thread = threading.Thread(target=self.ws.run_forever, daemon=True)
+                self.ws_thread.start()
+            else:
+                self.ws_thread = spawn(self.ws.run_forever)
+
             # Wait for connection to establish
-            time.sleep(2)
-            
+            sleep(2)
+
             # Check if connection was immediately refused
             if self.connection_failed:
                 logger.warning("Connection immediately failed")
                 return False
-            
+
             self.active = True
             logger.info("WebSocket connection established")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to connect WebSocket: {e}")
             self.handle_connection_failure()
@@ -322,19 +328,24 @@ class ProfessionalWebSocketManager:
     
     def schedule_reconnection(self):
         """Schedule reconnection with exponential backoff"""
-        if not self.reconnect_thread or not self.reconnect_thread.is_alive():
-            self.reconnect_thread = threading.Thread(target=self.reconnect_with_backoff)
-            self.reconnect_thread.daemon = True
-            self.reconnect_thread.start()
+        if IS_WINDOWS:
+            # Windows: use threading
+            if not self.reconnect_thread or not self.reconnect_thread.is_alive():
+                self.reconnect_thread = threading.Thread(target=self.reconnect_with_backoff, daemon=True)
+                self.reconnect_thread.start()
+        else:
+            # Linux: use eventlet greenlet
+            if not self.reconnect_thread or self.reconnect_thread.dead:
+                self.reconnect_thread = spawn(self.reconnect_with_backoff)
     
     def reconnect_with_backoff(self):
         """Reconnect with exponential backoff"""
         connection_refused_count = 0
-        
+
         for attempt in range(self.reconnect_attempts):
             delay = self.backoff_strategy.get_next_delay()
             logger.info(f"Reconnection attempt {attempt + 1}/{self.reconnect_attempts} in {delay} seconds")
-            time.sleep(delay)
+            sleep(delay)
             
             try:
                 # Reset the connection_failed flag before each attempt
@@ -357,11 +368,11 @@ class ProfessionalWebSocketManager:
                 # Check if connection succeeded or was refused
                 if connected:
                     logger.info("Reconnection successful")
-                    
+
                     # Resubscribe to all previous subscriptions
                     if self.subscriptions:
                         logger.info(f"Resubscribing to {len(self.subscriptions)} symbols after reconnection")
-                        time.sleep(1)  # Wait for authentication
+                        sleep(1)  # Wait for authentication
                         for sub_str in list(self.subscriptions):
                             subscription = json.loads(sub_str)
                             self.subscribe(subscription)
@@ -431,11 +442,11 @@ class ProfessionalWebSocketManager:
                 # Try to connect with the backup account
                 if self.connect(next_account.websocket_url, next_account.get_api_key()):
                     logger.info(f"Successfully connected to backup account: {next_account.account_name}")
-                    
+
                     # Resubscribe to all previous subscriptions
                     if self.subscriptions:
                         logger.info(f"Resubscribing to {len(self.subscriptions)} symbols after failover")
-                        time.sleep(1)  # Wait for authentication
+                        sleep(1)  # Wait for authentication
                         for sub_str in list(self.subscriptions):
                             subscription = json.loads(sub_str)
                             self.subscribe(subscription)
@@ -568,7 +579,7 @@ class ProfessionalWebSocketManager:
                 self.subscriptions.add(json.dumps(subscription))
 
                 # Small delay between subscriptions to avoid overwhelming server
-                time.sleep(0.05)  # 50ms delay
+                sleep(0.05)  # 50ms delay
                 return True
             else:
                 logger.warning(f"[WS_SUBSCRIBE] WebSocket not connected, queuing {symbol}")
@@ -635,9 +646,9 @@ class ProfessionalWebSocketManager:
                     'mode': mode_num,
                     'depth': 5  # Default depth level
                 }
-                
+
                 self.ws.send(json.dumps(message))
-                time.sleep(0.05)  # Small delay between subscriptions
+                sleep(0.05)  # Small delay between subscriptions
                 
             except json.JSONDecodeError:
                 logger.error(f"Failed to parse subscription: {sub_str}")

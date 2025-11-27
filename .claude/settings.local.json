@@ -4,7 +4,10 @@
       "Bash(D:\\openalgo-multi\\algomirror\\.venv\\Scripts\\python.exe:*)",
       "Bash(findstr:*)",
       "Bash(D:openalgo-multialgomirror.venvScriptspython.exe -m py_compile apputilsorder_status_poller.py apputilsstrategy_executor.py)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(uv run:*)",
+      "Bash(timeout 15 uv run:*)"
     ],
     "deny": [],
     "ask": []

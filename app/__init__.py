@@ -1,7 +1,11 @@
 # CRITICAL: Eventlet monkey patch must happen FIRST before any other imports
 # This fixes "RLock(s) were not greened" and prevents blocking I/O
-import eventlet
-eventlet.monkey_patch()
+# Only use eventlet on Linux (production) - Windows doesn't support it properly
+import platform
+IS_WINDOWS = platform.system() == 'Windows'
+if not IS_WINDOWS:
+    import eventlet
+    eventlet.monkey_patch()
 
 import os
 import logging

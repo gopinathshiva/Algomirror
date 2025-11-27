@@ -1,18 +1,22 @@
 """
 Background Service for Automatic Option Chain Monitoring
 Automatically starts option chains when primary account connects
+
+Cross-platform: Uses eventlet on Linux, threading on Windows
 """
 
-import threading
 import logging
+import threading
 from datetime import datetime, time, timedelta, date
-import time as time_module
 from typing import Optional, Dict, Any, List
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 from flask import current_app
 from sqlalchemy import and_
+
+# Cross-platform compatibility
+from app.utils.compat import sleep, spawn, spawn_n, create_lock, IS_WINDOWS
 
 from app.models import TradingAccount, TradingHoursTemplate, TradingSession, MarketHoliday, SpecialTradingSession
 from app.utils.option_chain import OptionChainManager
@@ -30,9 +34,9 @@ class OptionChainBackgroundService:
     Background service that automatically starts option chain monitoring
     when a primary account connects
     """
-    
+
     _instance = None
-    _lock = threading.Lock()
+    _lock = threading.Lock()  # Use threading.Lock for singleton pattern (works on both platforms)
     
     def __new__(cls):
         if cls._instance is None:
@@ -110,7 +114,7 @@ class OptionChainBackgroundService:
                 # Wait for authentication
                 auth_wait_time = 0
                 while not ws_manager.authenticated and auth_wait_time < 5:
-                    time_module.sleep(0.5)
+                    sleep(0.5)
                     auth_wait_time += 0.5
 
                 if not ws_manager.authenticated:
@@ -212,9 +216,8 @@ class OptionChainBackgroundService:
                 # Option chains will load only when users visit /trading/option-chain
                 # This reduces WebSocket subscriptions from 1000+ to just open positions (5-50)
 
-                import threading
                 def start_services():
-                    time_module.sleep(2)  # Give Flask time to start
+                    sleep(2)  # Give Flask time to start
 
                     # Run services within Flask app context
                     if self.flask_app:
@@ -235,7 +238,7 @@ class OptionChainBackgroundService:
                             # This ensures all services use the SAME connection
                             if self.shared_websocket_manager:
                                 session_manager.set_websocket_manager(self.shared_websocket_manager)
-                                logger.info("✅ SessionManager initialized with shared WebSocket connection")
+                                logger.info("SessionManager initialized with shared WebSocket connection")
                             else:
                                 logger.warning("No shared WebSocket manager available for SessionManager")
 
@@ -243,9 +246,8 @@ class OptionChainBackgroundService:
                     else:
                         logger.error("Flask app not set - cannot start services")
 
-                thread = threading.Thread(target=start_services)
-                thread.daemon = True
-                thread.start()
+                # Spawn background task (greenlet on Linux, thread on Windows)
+                spawn(start_services)
             else:
                 logger.info("Outside trading hours, services will start at market open")
                 
@@ -402,7 +404,7 @@ class OptionChainBackgroundService:
                         # Wait for authentication to complete (max 5 seconds)
                         auth_wait_time = 0
                         while not ws_manager.authenticated and auth_wait_time < 5:
-                            time_module.sleep(0.5)
+                            sleep(0.5)
                             auth_wait_time += 0.5
                             
                         if not ws_manager.authenticated:
@@ -936,8 +938,14 @@ class OptionChainBackgroundService:
         try:
             # Run within Flask app context for database access
             if self.flask_app:
-                with self.flask_app.app_context():
-                    risk_manager.run_risk_checks()
+                def _do_risk_check():
+                    try:
+                        with self.flask_app.app_context():
+                            risk_manager.run_risk_checks()
+                    except Exception as e:
+                        logger.error(f"Error in risk check: {e}")
+                # Spawn background task (greenlet on Linux, thread on Windows)
+                spawn_n(_do_risk_check)
             else:
                 logger.warning("Flask app not available for risk checks")
         except Exception as e:
@@ -948,8 +956,14 @@ class OptionChainBackgroundService:
         try:
             # Run within Flask app context for database access
             if self.flask_app:
-                with self.flask_app.app_context():
-                    session_manager.cleanup_expired_sessions()
+                def _do_cleanup():
+                    try:
+                        with self.flask_app.app_context():
+                            session_manager.cleanup_expired_sessions()
+                    except Exception as e:
+                        logger.error(f"Error in cleanup: {e}")
+                # Spawn background task (greenlet on Linux, thread on Windows)
+                spawn_n(_do_cleanup)
             else:
                 logger.warning("Flask app not available for session cleanup")
         except Exception as e:

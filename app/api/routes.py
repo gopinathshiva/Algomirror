@@ -1,9 +1,18 @@
-from flask import jsonify, request
+from flask import jsonify, request, make_response
 from flask_login import login_required, current_user
 from app.api import api_bp
 from app.models import TradingAccount
 from app.utils.rate_limiter import api_rate_limit
 from app.utils.ping_monitor import ping_monitor
+
+
+def no_cache_response(data, status=200):
+    """Create a JSON response with no-cache headers to prevent stale data"""
+    response = make_response(jsonify(data), status)
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @api_bp.route('/accounts')
 @login_required
@@ -112,7 +121,7 @@ def get_account_funds(account_id):
             account.last_data_update = datetime.utcnow()
             db.session.commit()
 
-            return jsonify({
+            return no_cache_response({
                 'status': 'success',
                 'data': {
                     'account_id': account.id,
@@ -130,7 +139,7 @@ def get_account_funds(account_id):
         elif account.last_funds_data:
             # Return cached data if API fails
             cached_data = account.last_funds_data
-            return jsonify({
+            return no_cache_response({
                 'status': 'success',
                 'data': {
                     'account_id': account.id,
@@ -147,16 +156,16 @@ def get_account_funds(account_id):
                 }
             })
         else:
-            return jsonify({
+            return no_cache_response({
                 'status': 'error',
                 'message': response.get('message', 'Failed to fetch funds data')
-            }), 500
+            }, 500)
 
     except Exception as e:
-        return jsonify({
+        return no_cache_response({
             'status': 'error',
             'message': f'Failed to get funds: {str(e)}'
-        }), 500
+        }, 500)
 
 @api_bp.route('/accounts/<int:account_id>/pnl')
 @login_required

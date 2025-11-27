@@ -467,16 +467,29 @@ async function confirmClosePositions() {
     currentStrategyId = null;
 }
 
-// Load account funds data
+// Load account funds data - fetch all accounts in PARALLEL for faster loading
 async function loadAccountFunds() {
     const accounts = {{ accounts_json|tojson }};
 
-    for (const account of accounts) {
-        try {
-            const response = await fetch(`/api/accounts/${account.id}/funds`);
-            const data = await response.json();
+    // Add cache-busting timestamp to prevent stale data
+    const timestamp = Date.now();
 
-            if (data.status === 'success' && data.data) {
+    // Fetch all accounts in parallel using Promise.allSettled
+    const fetchPromises = accounts.map(account =>
+        fetch(`/api/accounts/${account.id}/funds?_t=${timestamp}`, { signal: AbortSignal.timeout(10000) })
+            .then(response => response.json())
+            .then(data => ({ account, data, success: true }))
+            .catch(error => ({ account, error, success: false }))
+    );
+
+    const results = await Promise.allSettled(fetchPromises);
+
+    // Process results
+    for (const result of results) {
+        if (result.status === 'fulfilled') {
+            const { account, data, success } = result.value;
+
+            if (success && data.status === 'success' && data.data) {
                 const funds = data.data;
 
                 // Update available cash
@@ -501,29 +514,45 @@ async function loadAccountFunds() {
                 if (availableEl) availableEl.textContent = '₹0.00';
                 if (marginEl) marginEl.textContent = '₹0.00';
             }
-        } catch (error) {
-            console.error(`Error loading funds for account ${account.id}:`, error);
+        } else {
+            // Promise rejected
+            const account = accounts.find(a => results.indexOf(result) === accounts.indexOf(a));
+            console.error(`Error loading funds for account:`, result.reason);
 
-            // Show error state
-            const availableEl = document.getElementById(`available-${account.id}`);
-            const marginEl = document.getElementById(`margin-${account.id}`);
+            if (account) {
+                const availableEl = document.getElementById(`available-${account.id}`);
+                const marginEl = document.getElementById(`margin-${account.id}`);
 
-            if (availableEl) availableEl.textContent = 'Error';
-            if (marginEl) marginEl.textContent = 'Error';
+                if (availableEl) availableEl.textContent = 'Error';
+                if (marginEl) marginEl.textContent = 'Error';
+            }
         }
     }
 }
 
-// Load account P&L data (realized + unrealized)
+// Load account P&L data (realized + unrealized) - fetch all accounts in PARALLEL
 async function loadAccountPnL() {
     const accounts = {{ accounts_json|tojson }};
 
-    for (const account of accounts) {
-        try {
-            const response = await fetch(`/api/accounts/${account.id}/pnl`);
-            const data = await response.json();
+    // Add cache-busting timestamp to prevent stale data
+    const timestamp = Date.now();
 
-            if (data.status === 'success' && data.data) {
+    // Fetch all accounts in parallel using Promise.allSettled
+    const fetchPromises = accounts.map(account =>
+        fetch(`/api/accounts/${account.id}/pnl?_t=${timestamp}`, { signal: AbortSignal.timeout(10000) })
+            .then(response => response.json())
+            .then(data => ({ account, data, success: true }))
+            .catch(error => ({ account, error, success: false }))
+    );
+
+    const results = await Promise.allSettled(fetchPromises);
+
+    // Process results
+    for (const result of results) {
+        if (result.status === 'fulfilled') {
+            const { account, data, success } = result.value;
+
+            if (success && data.status === 'success' && data.data) {
                 const pnlData = data.data;
                 const totalPnl = parseFloat(pnlData.total_pnl) || 0;
 
@@ -551,14 +580,17 @@ async function loadAccountPnL() {
                     pnlEl.className = 'font-bold text-base-content/60';
                 }
             }
-        } catch (error) {
-            console.error(`Error loading P&L for account ${account.id}:`, error);
+        } else {
+            // Promise rejected
+            const account = accounts.find(a => results.indexOf(result) === accounts.indexOf(a));
+            console.error(`Error loading P&L for account:`, result.reason);
 
-            // Show error state
-            const pnlEl = document.getElementById(`pnl-account-${account.id}`);
-            if (pnlEl) {
-                pnlEl.textContent = 'Error';
-                pnlEl.className = 'font-bold text-error';
+            if (account) {
+                const pnlEl = document.getElementById(`pnl-account-${account.id}`);
+                if (pnlEl) {
+                    pnlEl.textContent = 'Error';
+                    pnlEl.className = 'font-bold text-error';
+                }
             }
         }
     }

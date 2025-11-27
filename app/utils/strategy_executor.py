@@ -1504,9 +1504,31 @@ class StrategyExecutor:
                         strategy=self.strategy.name
                     )
                     if order_response.get('status') == 'success':
-                        execution.entry_price = order_response.get('data', {}).get('average_price')
-                        db.session.commit()
-                        logger.info(f"[MONITOR] Fetched entry price: {execution.entry_price} for {symbol}")
+                        avg_price = order_response.get('data', {}).get('average_price')
+
+                        # If average_price is missing/zero, wait 3 seconds and re-fetch
+                        # Some brokers return complete status before average_price is populated
+                        if not avg_price or avg_price == 0:
+                            logger.warning(f"[MONITOR] Entry price missing for {symbol}, waiting 3s to re-fetch...")
+                            time_module.sleep(3)
+
+                            retry_response = client.orderstatus(
+                                order_id=execution.order_id,
+                                strategy=self.strategy.name
+                            )
+                            if retry_response.get('status') == 'success':
+                                retry_avg_price = retry_response.get('data', {}).get('average_price')
+                                if retry_avg_price and retry_avg_price > 0:
+                                    avg_price = retry_avg_price
+                                    logger.info(f"[MONITOR] Entry price after retry: {avg_price} for {symbol}")
+
+                        # Only update if we have a valid price
+                        if avg_price and avg_price > 0:
+                            execution.entry_price = avg_price
+                            db.session.commit()
+                            logger.info(f"[MONITOR] Fetched entry price: {execution.entry_price} for {symbol}")
+                        else:
+                            logger.warning(f"[MONITOR] Could not fetch valid entry price for {symbol}")
 
                 logger.debug(f"[MONITOR_LOOP] Entry price={execution.entry_price}, Status={execution.status}")
 
@@ -1729,8 +1751,31 @@ class StrategyExecutor:
 
                 if order_status_response.get('status') == 'success':
                     order_data = order_status_response.get('data', {})
-                    execution.exit_price = order_data.get('average_price')
+                    exit_avg_price = order_data.get('average_price')
                     execution.broker_order_status = order_data.get('order_status')  # OpenAlgo API returns 'order_status' not 'status'
+
+                    # If exit price is missing/zero, wait 3 seconds and re-fetch
+                    if not exit_avg_price or exit_avg_price == 0:
+                        logger.warning(f"[EXIT] Exit price missing for {execution.symbol}, waiting 3s to re-fetch...")
+                        import time as time_sleep
+                        time_sleep.sleep(3)
+
+                        retry_response = client.orderstatus(
+                            order_id=exit_order_id,
+                            strategy=self.strategy.name
+                        )
+                        if retry_response.get('status') == 'success':
+                            retry_data = retry_response.get('data', {})
+                            retry_exit_price = retry_data.get('average_price')
+                            if retry_exit_price and retry_exit_price > 0:
+                                exit_avg_price = retry_exit_price
+                                logger.info(f"[EXIT] Exit price after retry: Rs.{exit_avg_price} for {execution.symbol}")
+
+                    # Only update if we have a valid price
+                    if exit_avg_price and exit_avg_price > 0:
+                        execution.exit_price = exit_avg_price
+                    else:
+                        logger.warning(f"[EXIT] Could not fetch valid exit price for {execution.symbol}")
 
                 db.session.commit()
 

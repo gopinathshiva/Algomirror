@@ -165,10 +165,36 @@ class OrderStatusPoller:
                         is_entry_order = execution.status == 'pending'
                         is_exit_order = execution.status == 'entered' or execution.exit_order_id == order_id
 
+                        # If average_price is missing/zero, wait 3 seconds and re-fetch
+                        # Some brokers return complete status before average_price is populated
+                        if not avg_price or avg_price == 0:
+                            logger.warning(f"[PRICE MISSING] Order {order_id} complete but average_price is {avg_price}, waiting 3s to re-fetch...")
+                            time.sleep(3)
+
+                            # Re-fetch order status after delay (respecting rate limit)
+                            retry_response = client.orderstatus(order_id=order_id, strategy=strategy_name)
+                            self.last_check_time[account_key] = datetime.utcnow()
+
+                            if retry_response.get('status') == 'success':
+                                retry_data = retry_response.get('data', {})
+                                retry_avg_price = retry_data.get('average_price', 0)
+
+                                if retry_avg_price and retry_avg_price > 0:
+                                    avg_price = retry_avg_price
+                                    logger.info(f"[PRICE FETCHED] Order {order_id} average_price after retry: Rs.{avg_price}")
+                                else:
+                                    logger.warning(f"[PRICE STILL MISSING] Order {order_id} average_price still {retry_avg_price} after retry")
+                            else:
+                                logger.warning(f"[RETRY FAILED] Failed to re-fetch order {order_id}: {retry_response.get('message')}")
+
                         if is_entry_order:
                             execution.status = 'entered'
                             execution.broker_order_status = 'complete'
-                            execution.entry_price = avg_price
+                            # Only update entry_price if we have a valid average_price
+                            if avg_price and avg_price > 0:
+                                execution.entry_price = avg_price
+                            else:
+                                logger.warning(f"[PRICE WARNING] Entry order {order_id} complete but no valid average_price, keeping existing entry_price: {execution.entry_price}")
                             if not execution.entry_time:
                                 execution.entry_time = datetime.utcnow()
 
@@ -191,7 +217,11 @@ class OrderStatusPoller:
                         elif is_exit_order:
                             execution.status = 'exited'
                             execution.broker_order_status = 'complete'
-                            execution.exit_price = avg_price
+                            # Only update exit_price if we have a valid average_price
+                            if avg_price and avg_price > 0:
+                                execution.exit_price = avg_price
+                            else:
+                                logger.warning(f"[PRICE WARNING] Exit order {order_id} complete but no valid average_price, keeping existing exit_price: {execution.exit_price}")
                             if not execution.exit_time:
                                 execution.exit_time = datetime.utcnow()
 

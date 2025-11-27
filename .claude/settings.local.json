@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(D:\\openalgo-multi\\algomirror\\.venv\\Scripts\\python.exe:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(D:openalgo-multialgomirror.venvScriptspython.exe -m py_compile apputilsorder_status_poller.py apputilsstrategy_executor.py)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

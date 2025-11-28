@@ -82,19 +82,11 @@ class StrategyExecutor:
         Fetch margin percentage from TradeQuality table in database.
         This ensures consistency with the Margin Calculator page.
 
-        Mapping:
-        - aggressive -> Grade A
-        - balanced -> Grade B
-        - conservative -> Grade C
+        Supports two formats:
+        - New format: 'grade_A', 'grade_B', 'grade_C', 'grade_D', etc.
+        - Legacy format: 'aggressive', 'balanced', 'conservative' (mapped to A, B, C)
         """
         from app.models import TradeQuality
-
-        # Default fallback percentages (only used if DB lookup fails)
-        fallback_percentages = {
-            'aggressive': 0.80,
-            'balanced': 0.65,
-            'conservative': 0.40
-        }
 
         risk_profile = strategy.risk_profile
 
@@ -102,8 +94,15 @@ class StrategyExecutor:
         if not risk_profile or risk_profile == 'fixed_lots':
             return 0.65  # Default 65%
 
-        # Get quality grade from risk profile
-        quality_grade = self.risk_profile_to_grade.get(risk_profile)
+        # Determine quality grade from risk profile
+        quality_grade = None
+
+        # New format: grade_X (e.g., grade_A, grade_B, grade_D)
+        if risk_profile.startswith('grade_'):
+            quality_grade = risk_profile.replace('grade_', '')
+        # Legacy format: map old names to grades
+        elif risk_profile in self.risk_profile_to_grade:
+            quality_grade = self.risk_profile_to_grade.get(risk_profile)
 
         if not quality_grade:
             logger.warning(f"Unknown risk_profile '{risk_profile}', using default 65%")
@@ -123,14 +122,12 @@ class StrategyExecutor:
                 return margin_pct
             else:
                 # Fallback if not found in DB
-                fallback = fallback_percentages.get(risk_profile, 0.65)
-                logger.warning(f"TradeQuality not found for Grade {quality_grade}, using fallback {fallback*100}%")
-                return fallback
+                logger.warning(f"TradeQuality not found for Grade {quality_grade}, using fallback 65%")
+                return 0.65
 
         except Exception as e:
             logger.error(f"Error fetching TradeQuality from DB: {e}")
-            fallback = fallback_percentages.get(risk_profile, 0.65)
-            return fallback
+            return 0.65
 
     def _get_active_accounts(self) -> List[TradingAccount]:
         """Get active trading accounts for strategy"""

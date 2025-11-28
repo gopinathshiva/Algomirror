@@ -287,7 +287,9 @@ def builder(strategy_id=None):
         legs_data = strategy.legs_list
 
     # Get trade quality settings for dynamic risk profile percentages
-    trade_qualities = TradeQuality.query.filter_by(user_id=current_user.id).all()
+    trade_qualities = TradeQuality.query.filter_by(user_id=current_user.id).order_by(TradeQuality.quality_grade).all()
+
+    # Create quality map and list for template
     quality_map = {q.quality_grade: q.margin_percentage for q in trade_qualities}
 
     # Default values if not set
@@ -297,11 +299,17 @@ def builder(strategy_id=None):
         'C': quality_map.get('C', 40)   # Conservative
     }
 
+    # Add any custom grades to percentages
+    for q in trade_qualities:
+        if q.quality_grade not in quality_percentages:
+            quality_percentages[q.quality_grade] = q.margin_percentage
+
     return render_template('strategy/builder.html',
                          strategy=strategy,
                          strategy_legs=legs_data,
                          accounts=accounts,
-                         quality_percentages=quality_percentages)
+                         quality_percentages=quality_percentages,
+                         trade_qualities=trade_qualities)
 
 @strategy_bp.route('/execute/<int:strategy_id>', methods=['POST'])
 @login_required

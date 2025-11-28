@@ -187,8 +187,24 @@ def requirements():
             user_id=current_user.id
         ).all()
 
+    # Get trade qualities
+    trade_qualities = TradeQuality.query.filter_by(
+        user_id=current_user.id
+    ).all()
+
+    if not trade_qualities:
+        TradeQuality.get_or_create_defaults(current_user.id)
+        trade_qualities = TradeQuality.query.filter_by(
+            user_id=current_user.id
+        ).all()
+
+    # Convert to dict for easy template access
+    qualities_dict = {q.quality_grade: q for q in trade_qualities}
+
     return render_template('margin/requirements.html',
-                         requirements=requirements)
+                         requirements=requirements,
+                         trade_qualities=trade_qualities,
+                         qualities_dict=qualities_dict)
 
 @margin_bp.route('/qualities', methods=['GET', 'POST'])
 @login_required
@@ -578,6 +594,50 @@ def update_trade_quality(quality_grade):
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error updating trade quality: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 400
+
+
+@margin_bp.route('/delete-quality/<string:quality_grade>', methods=['DELETE'])
+@login_required
+@api_rate_limit()
+def delete_trade_quality(quality_grade):
+    """Delete a custom trade quality grade (cannot delete A, B, C)"""
+    try:
+        # Prevent deletion of default grades
+        if quality_grade in ['A', 'B', 'C']:
+            return jsonify({
+                'status': 'error',
+                'message': 'Cannot delete default grades (A, B, C)'
+            }), 400
+
+        # Find and delete the quality
+        quality = TradeQuality.query.filter_by(
+            user_id=current_user.id,
+            quality_grade=quality_grade
+        ).first()
+
+        if not quality:
+            return jsonify({
+                'status': 'error',
+                'message': f'Grade {quality_grade} not found'
+            }), 404
+
+        db.session.delete(quality)
+        db.session.commit()
+
+        logger.info(f"Deleted trade quality {quality_grade} for user {current_user.id}")
+
+        return jsonify({
+            'status': 'success',
+            'message': f'Grade {quality_grade} deleted successfully'
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting trade quality: {e}")
         return jsonify({
             'status': 'error',
             'message': str(e)

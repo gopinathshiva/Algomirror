@@ -318,31 +318,127 @@
             </div>
         </div>
 
-        <!-- Quality Grades Card -->
+        <!-- Quality Grades Card - Editable -->
         <div class="card bg-base-100 shadow-xl">
             <div class="card-body">
-                <h2 class="card-title mb-4">Trade Quality</h2>
-                <div class="space-y-3">
-                    <div class="flex items-center justify-between p-3 bg-base-200 rounded">
-                        <div>
-                            <span class="font-medium">Grade A</span>
-                            <span class="text-sm text-base-content/70 ml-2">Conservative</span>
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="card-title">Trade Quality Settings</h2>
+                    <button onclick="saveTradeQualities(this)" class="btn btn-sm btn-primary">
+                        Save Qualities
+                    </button>
+                </div>
+                <p class="text-sm text-base-content/70 mb-4">Set the margin percentage for each quality grade. These are used in Strategy Builder.</p>
+                <div class="space-y-4">
+                    <!-- Grade A -->
+                    <div class="p-4 bg-base-200 rounded-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="badge badge-success badge-lg">A</span>
+                                <span class="font-semibold">Grade A</span>
+                            </div>
+                            <select id="quality-a-risk" class="select select-bordered select-sm w-32">
+                                <option value="conservative" {% if qualities_dict and qualities_dict.get('A') and qualities_dict['A'].risk_level == 'conservative' %}selected{% endif %}>Conservative</option>
+                                <option value="moderate" {% if qualities_dict and qualities_dict.get('A') and qualities_dict['A'].risk_level == 'moderate' %}selected{% endif %}>Moderate</option>
+                                <option value="aggressive" {% if qualities_dict and qualities_dict.get('A') and qualities_dict['A'].risk_level == 'aggressive' %}selected{% endif %}>Aggressive</option>
+                            </select>
                         </div>
-                        <span class="badge badge-success">95%</span>
+                        <div class="form-control">
+                            <label class="label py-1">
+                                <span class="label-text">Margin Percentage (%)</span>
+                            </label>
+                            <input type="number" id="quality-a-percentage" class="input input-bordered input-sm"
+                                   min="1" max="100" step="1"
+                                   value="{{ qualities_dict['A'].margin_percentage if qualities_dict and qualities_dict.get('A') else 95 }}" />
+                        </div>
                     </div>
-                    <div class="flex items-center justify-between p-3 bg-base-200 rounded">
-                        <div>
-                            <span class="font-medium">Grade B</span>
-                            <span class="text-sm text-base-content/70 ml-2">Moderate</span>
+
+                    <!-- Grade B -->
+                    <div class="p-4 bg-base-200 rounded-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="badge badge-warning badge-lg">B</span>
+                                <span class="font-semibold">Grade B</span>
+                            </div>
+                            <select id="quality-b-risk" class="select select-bordered select-sm w-32">
+                                <option value="conservative" {% if qualities_dict and qualities_dict.get('B') and qualities_dict['B'].risk_level == 'conservative' %}selected{% endif %}>Conservative</option>
+                                <option value="moderate" {% if qualities_dict and qualities_dict.get('B') and qualities_dict['B'].risk_level == 'moderate' %}selected{% endif %}>Moderate</option>
+                                <option value="aggressive" {% if qualities_dict and qualities_dict.get('B') and qualities_dict['B'].risk_level == 'aggressive' %}selected{% endif %}>Aggressive</option>
+                            </select>
                         </div>
-                        <span class="badge badge-warning">65%</span>
+                        <div class="form-control">
+                            <label class="label py-1">
+                                <span class="label-text">Margin Percentage (%)</span>
+                            </label>
+                            <input type="number" id="quality-b-percentage" class="input input-bordered input-sm"
+                                   min="1" max="100" step="1"
+                                   value="{{ qualities_dict['B'].margin_percentage if qualities_dict and qualities_dict.get('B') else 65 }}" />
+                        </div>
                     </div>
-                    <div class="flex items-center justify-between p-3 bg-base-200 rounded">
-                        <div>
-                            <span class="font-medium">Grade C</span>
-                            <span class="text-sm text-base-content/70 ml-2">Aggressive</span>
+
+                    <!-- Grade C -->
+                    <div class="p-4 bg-base-200 rounded-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="badge badge-error badge-lg">C</span>
+                                <span class="font-semibold">Grade C</span>
+                            </div>
+                            <select id="quality-c-risk" class="select select-bordered select-sm w-32">
+                                <option value="conservative" {% if qualities_dict and qualities_dict.get('C') and qualities_dict['C'].risk_level == 'conservative' %}selected{% endif %}>Conservative</option>
+                                <option value="moderate" {% if qualities_dict and qualities_dict.get('C') and qualities_dict['C'].risk_level == 'moderate' %}selected{% endif %}>Moderate</option>
+                                <option value="aggressive" {% if qualities_dict and qualities_dict.get('C') and qualities_dict['C'].risk_level == 'aggressive' %}selected{% endif %}>Aggressive</option>
+                            </select>
                         </div>
-                        <span class="badge badge-error">36%</span>
+                        <div class="form-control">
+                            <label class="label py-1">
+                                <span class="label-text">Margin Percentage (%)</span>
+                            </label>
+                            <input type="number" id="quality-c-percentage" class="input input-bordered input-sm"
+                                   min="1" max="100" step="1"
+                                   value="{{ qualities_dict['C'].margin_percentage if qualities_dict and qualities_dict.get('C') else 36 }}" />
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Custom Grades -->
+                    <div id="custom-grades-container">
+                        {% for grade, quality in qualities_dict.items() if grade not in ['A', 'B', 'C'] %}
+                        <div class="p-4 bg-base-200 rounded-lg custom-grade-item" data-grade="{{ grade }}">
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="badge badge-neutral badge-lg">{{ grade }}</span>
+                                    <span class="font-semibold">Grade {{ grade }}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <select class="select select-bordered select-sm w-32 custom-grade-risk">
+                                        <option value="conservative" {% if quality.risk_level == 'conservative' %}selected{% endif %}>Conservative</option>
+                                        <option value="moderate" {% if quality.risk_level == 'moderate' %}selected{% endif %}>Moderate</option>
+                                        <option value="aggressive" {% if quality.risk_level == 'aggressive' %}selected{% endif %}>Aggressive</option>
+                                    </select>
+                                    <button type="button" class="btn btn-ghost btn-sm btn-circle text-error" onclick="removeGrade(this)">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-control">
+                                <label class="label py-1">
+                                    <span class="label-text">Margin Percentage (%)</span>
+                                </label>
+                                <input type="number" class="input input-bordered input-sm custom-grade-percentage"
+                                       min="1" max="100" step="1" value="{{ quality.margin_percentage }}" />
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Add New Grade Button -->
+                    <div class="mt-4">
+                        <button type="button" onclick="addNewGrade()" class="btn btn-outline btn-sm w-full">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Add Custom Grade
+                        </button>
                     </div>
                 </div>
             </div>
@@ -486,6 +582,142 @@
         // Show success message
         if (successCount === instruments.length) {
             showNotification('✓ All margin requirements saved successfully!', 'success');
+        }
+    }
+
+    // Track used grades
+    function getUsedGrades() {
+        const used = ['A', 'B', 'C'];
+        document.querySelectorAll('.custom-grade-item').forEach(item => {
+            used.push(item.dataset.grade);
+        });
+        return used;
+    }
+
+    function getNextGrade() {
+        const used = getUsedGrades();
+        const alphabet = 'DEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+        for (const letter of alphabet) {
+            if (!used.includes(letter)) {
+                return letter;
+            }
+        }
+        return null;
+    }
+
+    function addNewGrade() {
+        const nextGrade = getNextGrade();
+        if (!nextGrade) {
+            showNotification('Maximum number of grades reached', 'error');
+            return;
+        }
+
+        const container = document.getElementById('custom-grades-container');
+        const gradeHtml = `
+            <div class="p-4 bg-base-200 rounded-lg custom-grade-item mt-4" data-grade="${nextGrade}">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <span class="badge badge-neutral badge-lg">${nextGrade}</span>
+                        <span class="font-semibold">Grade ${nextGrade}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <select class="select select-bordered select-sm w-32 custom-grade-risk">
+                            <option value="conservative">Conservative</option>
+                            <option value="moderate" selected>Moderate</option>
+                            <option value="aggressive">Aggressive</option>
+                        </select>
+                        <button type="button" class="btn btn-ghost btn-sm btn-circle text-error" onclick="removeGrade(this)">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label py-1">
+                        <span class="label-text">Margin Percentage (%)</span>
+                    </label>
+                    <input type="number" class="input input-bordered input-sm custom-grade-percentage"
+                           min="1" max="100" step="1" value="50" />
+                </div>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', gradeHtml);
+        showNotification(`Grade ${nextGrade} added. Remember to save!`, 'info');
+    }
+
+    function removeGrade(btn) {
+        const gradeItem = btn.closest('.custom-grade-item');
+        const grade = gradeItem.dataset.grade;
+        gradeItem.remove();
+        showNotification(`Grade ${grade} removed. Remember to save!`, 'info');
+    }
+
+    async function saveTradeQualities(saveBtn) {
+        // Disable save button and show loading
+        const originalContent = saveBtn.innerHTML;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="loading loading-spinner loading-xs mr-1"></span>Saving...';
+
+        // Collect default grades (A, B, C)
+        const qualities = [
+            {
+                grade: 'A',
+                percentage: parseFloat(document.getElementById('quality-a-percentage').value),
+                risk_level: document.getElementById('quality-a-risk').value
+            },
+            {
+                grade: 'B',
+                percentage: parseFloat(document.getElementById('quality-b-percentage').value),
+                risk_level: document.getElementById('quality-b-risk').value
+            },
+            {
+                grade: 'C',
+                percentage: parseFloat(document.getElementById('quality-c-percentage').value),
+                risk_level: document.getElementById('quality-c-risk').value
+            }
+        ];
+
+        // Collect custom grades dynamically
+        document.querySelectorAll('.custom-grade-item').forEach(item => {
+            const grade = item.dataset.grade;
+            const percentage = parseFloat(item.querySelector('.custom-grade-percentage').value);
+            const risk_level = item.querySelector('.custom-grade-risk').value;
+            qualities.push({ grade, percentage, risk_level });
+        });
+
+        // Validate percentages
+        for (const q of qualities) {
+            if (isNaN(q.percentage) || q.percentage < 1 || q.percentage > 100) {
+                showNotification(`Grade ${q.grade}: Percentage must be between 1 and 100`, 'error');
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = originalContent;
+                return;
+            }
+        }
+
+        try {
+            const response = await fetch('/margin/qualities', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content
+                },
+                body: JSON.stringify({ qualities: qualities })
+            });
+
+            const result = await response.json();
+
+            if (result.status === 'success') {
+                showNotification('Trade quality settings saved successfully!', 'success');
+            } else {
+                throw new Error(result.message || 'Failed to save trade qualities');
+            }
+        } catch (error) {
+            showNotification('Error saving trade qualities: ' + error.message, 'error');
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = originalContent;
         }
     }
 

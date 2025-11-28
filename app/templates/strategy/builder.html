@@ -140,9 +140,11 @@
                         </label>
                         <select id="riskProfile" class="select select-bordered" onchange="toggleLotFields()">
                             <option value="fixed_lots" {% if strategy and strategy.risk_profile == 'fixed_lots' %}selected{% elif not strategy %}selected{% endif %}>Fixed Lot Size (Default)</option>
-                            <option value="balanced" {% if strategy and strategy.risk_profile == 'balanced' %}selected{% endif %}>Balanced ({{ quality_percentages.B }}% margin)</option>
-                            <option value="conservative" {% if strategy and strategy.risk_profile == 'conservative' %}selected{% endif %}>Conservative ({{ quality_percentages.C }}% margin)</option>
-                            <option value="aggressive" {% if strategy and strategy.risk_profile == 'aggressive' %}selected{% endif %}>Aggressive ({{ quality_percentages.A }}% margin)</option>
+                            {% for quality in trade_qualities|sort(attribute='quality_grade') %}
+                            <option value="grade_{{ quality.quality_grade }}" {% if strategy and strategy.risk_profile == 'grade_' ~ quality.quality_grade %}selected{% endif %}>
+                                Grade {{ quality.quality_grade }} ({{ quality.margin_percentage|int }}% margin)
+                            </option>
+                            {% endfor %}
                         </select>
                     </div>
 

@@ -342,16 +342,23 @@ class MarginCalculator:
             logger.error(f"[LOT CALC DEBUG] Error calculating lot size with custom margin: {e}", exc_info=True)
             return 0, {"error": str(e)}
 
-    def get_available_margin(self, account: TradingAccount) -> float:
-        """Get real-time available margin from account"""
+    def get_available_margin(self, account: TradingAccount, force_refresh: bool = True) -> float:
+        """
+        Get available margin from account.
+
+        Args:
+            account: Trading account object
+            force_refresh: If True, always fetch fresh data from API (default: True)
+                          If False, use cached data if available and < 5 minutes old
+        """
         try:
-            logger.info(f"[MARGIN DEBUG] Getting available margin for account: {account.account_name} (ID: {account.id})")
+            logger.info(f"[MARGIN DEBUG] Getting available margin for account: {account.account_name} (ID: {account.id}), force_refresh={force_refresh}")
 
             # Check if account has margin tracker
             tracker = MarginTracker.query.filter_by(account_id=account.id).first()
 
-            # If tracker exists and is recent (< 5 minutes), use cached data
-            if tracker and tracker.last_updated:
+            # Only use cached data if force_refresh is False and cache is recent
+            if not force_refresh and tracker and tracker.last_updated:
                 time_diff = (datetime.utcnow() - tracker.last_updated).seconds
                 logger.info(f"[MARGIN DEBUG] Found tracker, last updated {time_diff} seconds ago")
                 if time_diff < 300:  # 5 minutes

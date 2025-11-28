@@ -211,21 +211,25 @@ class SupertrendExitService:
 
                 # Check for exit signal based ONLY on close price vs Supertrend
                 # Exit triggers on candle close, executes immediately
+                #
+                # Pine Script direction convention:
+                #   direction = -1: Bullish (Up direction, green) - close crossed ABOVE supertrend
+                #   direction =  1: Bearish (Down direction, red) - close crossed BELOW supertrend
                 should_exit = False
                 exit_reason = None
 
                 if strategy.supertrend_exit_type == 'breakout':
-                    # Breakout: CLOSE crossed ABOVE Supertrend (direction = 1)
+                    # Breakout: CLOSE crossed ABOVE Supertrend (direction = -1 in Pine Script)
                     # Checked on candle close only, not intrabar
-                    if latest_direction > 0:
+                    if latest_direction == -1:  # Bullish - price above supertrend
                         should_exit = True
                         exit_reason = f'supertrend_breakout (Close: {latest_close:.2f}, ST: {latest_supertrend:.2f})'
                         logger.info(f"Strategy {strategy.id}: Supertrend BREAKOUT - Close crossed above ST on candle close")
 
                 elif strategy.supertrend_exit_type == 'breakdown':
-                    # Breakdown: CLOSE crossed BELOW Supertrend (direction = -1)
+                    # Breakdown: CLOSE crossed BELOW Supertrend (direction = 1 in Pine Script)
                     # Checked on candle close only, not intrabar
-                    if latest_direction < 0:
+                    if latest_direction == 1:  # Bearish - price below supertrend
                         should_exit = True
                         exit_reason = f'supertrend_breakdown (Close: {latest_close:.2f}, ST: {latest_supertrend:.2f})'
                         logger.info(f"Strategy {strategy.id}: Supertrend BREAKDOWN - Close crossed below ST on candle close")

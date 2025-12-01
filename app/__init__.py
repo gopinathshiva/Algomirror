@@ -215,11 +215,9 @@ def create_app(config_name=None):
     def handle_csrf_error(e):
         from flask import flash, redirect, url_for, request
         app.logger.warning(f'CSRF error on {request.path}: {e.description}')
-        flash('Your session has expired. Please try again.', 'warning')
-        # Redirect to login page for auth routes, otherwise to referrer or home
-        if request.path.startswith('/auth'):
-            return redirect(url_for('auth.login'))
-        return redirect(request.referrer or url_for('main.index'))
+        flash('Your session has expired. Please refresh and try again.', 'warning')
+        # Redirect to login page
+        return redirect(url_for('auth.login'))
 
     # Create database tables
     with app.app_context():

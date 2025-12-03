@@ -930,7 +930,12 @@ def delete_strategy(strategy_id):
         if force_delete and active_executions:
             logger.warning(f"Force deleting strategy {strategy_id} ({strategy.name}) with {len(active_executions)} open positions")
 
-        # Delete all executions first (cascade should handle this, but explicit is better)
+        # Delete risk events first (foreign key constraint)
+        from app.models import RiskEvent
+        deleted_risk_events = RiskEvent.query.filter_by(strategy_id=strategy_id).delete()
+        logger.info(f"Deleted {deleted_risk_events} risk events for strategy {strategy_id}")
+
+        # Delete all executions (cascade should handle this, but explicit is better)
         deleted_executions = 0
         for execution in all_executions:
             db.session.delete(execution)

@@ -851,9 +851,9 @@ class RiskEvent(db.Model):
     triggered_at = db.Column(db.DateTime, default=datetime.utcnow)
     notes = db.Column(db.Text)
 
-    # Relationships
-    strategy = db.relationship('Strategy', backref='risk_events')
-    execution = db.relationship('StrategyExecution', backref='risk_events')
+    # Relationships - cascade delete when Strategy/Execution is deleted
+    strategy = db.relationship('Strategy', backref=db.backref('risk_events', cascade='all, delete-orphan'))
+    execution = db.relationship('StrategyExecution', backref=db.backref('execution_risk_events', cascade='all, delete-orphan'))
 
     def __repr__(self):
         return f'<RiskEvent {self.event_type} - Strategy {self.strategy_id} at {self.triggered_at}>'

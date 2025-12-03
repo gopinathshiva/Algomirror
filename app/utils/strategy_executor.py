@@ -606,15 +606,16 @@ class StrategyExecutor:
 
             elif leg.product_type == 'futures':
                 # Get expiry date
+                logger.info(f"[FUTURES] Getting expiry for {leg.instrument}, expiry_type={leg.expiry}")
                 expiry = self._get_expiry_string(leg)
 
                 if not expiry:
-                    logger.error(f"Failed to get expiry for futures leg {leg.leg_number}")
+                    logger.error(f"[FUTURES] Failed to get expiry for futures leg {leg.leg_number}, instrument={leg.instrument}, expiry_type={leg.expiry}")
                     return ""
 
-                # Build futures symbol: NIFTY28MAR24FUT
+                # Build futures symbol: NIFTY30DEC25FUT
                 symbol = f"{base_symbol}{expiry}FUT"
-                logger.info(f"Built futures symbol: {symbol}")
+                logger.info(f"[FUTURES] Built symbol: {symbol} (base={base_symbol}, expiry={expiry})")
 
             else:
                 # Equity symbol
@@ -692,7 +693,8 @@ class StrategyExecutor:
                         return dt.max
 
                     sorted_expiries = sorted(expiries, key=parse_expiry)
-                    logger.info(f"[EXPIRY] {leg.instrument} {leg.product_type}: Available expiries: {sorted_expiries}")
+                    logger.info(f"[EXPIRY] {leg.instrument} {leg.product_type} on {exchange}: Raw expiries from API: {expiries}")
+                    logger.info(f"[EXPIRY] {leg.instrument} {leg.product_type} on {exchange}: Sorted expiries ({len(sorted_expiries)} total): {sorted_expiries}")
 
                     # Select appropriate expiry based on leg configuration
                     selected_expiry = None
@@ -755,12 +757,13 @@ class StrategyExecutor:
                         if leg.product_type == 'futures':
                             # Futures typically have 3 contracts: current, next, far
                             # next_month = second expiry (index 1)
+                            logger.info(f"[EXPIRY] FUTURES next_month: {len(sorted_expiries)} expiries available: {sorted_expiries}")
                             if len(sorted_expiries) > 1:
                                 selected_expiry = sorted_expiries[1]
-                                logger.info(f"[EXPIRY] FUTURES next_month: using second expiry = {selected_expiry}")
+                                logger.info(f"[EXPIRY] FUTURES next_month: using index[1] = {selected_expiry}")
                             else:
                                 selected_expiry = sorted_expiries[0] if sorted_expiries else None
-                                logger.warning(f"[EXPIRY] FUTURES next_month: only 1 expiry available, using = {selected_expiry}")
+                                logger.warning(f"[EXPIRY] FUTURES next_month: only {len(sorted_expiries)} expiry available, using index[0] = {selected_expiry}")
                         else:
                             # Options: find last expiry of next month
                             current_month = dt.now().month

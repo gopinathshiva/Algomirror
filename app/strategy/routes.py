@@ -1191,7 +1191,7 @@ def strategy_tradebook(strategy_id):
             'exchange': trade.exchange,
             'orderid': trade.order_id or f"STG_{trade.id}",
             'product': actual_product,
-            'quantity': 0.0,  # OpenAlgo format shows 0.0 for executed trades
+            'quantity': trade.quantity,
             'average_price': trade.entry_price or 0.0,
             'timestamp': utc_to_ist(trade.entry_time).strftime('%H:%M:%S') if trade.entry_time else "",
             'trade_value': entry_value
@@ -1212,7 +1212,7 @@ def strategy_tradebook(strategy_id):
                 'exchange': trade.exchange,
                 'orderid': exit_orderid,  # Use real order ID from OpenAlgo
                 'product': actual_product,
-                'quantity': 0.0,  # OpenAlgo format shows 0.0 for executed trades
+                'quantity': trade.quantity,
                 'average_price': trade.exit_price,
                 'timestamp': utc_to_ist(trade.exit_time).strftime('%H:%M:%S') if trade.exit_time else "",
                 'trade_value': exit_value

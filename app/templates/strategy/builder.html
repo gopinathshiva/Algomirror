@@ -416,6 +416,7 @@
                                     <th>Exchange</th>
                                     <th>Product</th>
                                     <th>Action</th>
+                                    <th>Qty</th>
                                     <th>Avg Price</th>
                                     <th>Trade Value</th>
                                     <th>Timestamp</th>
@@ -423,7 +424,7 @@
                             </thead>
                             <tbody id="tradebook-body">
                                 <tr>
-                                    <td colspan="10" class="text-center text-base-content/60">Loading...</td>
+                                    <td colspan="11" class="text-center text-base-content/60">Loading...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -2526,7 +2527,7 @@ async function loadTradebook(strategyId) {
             const trades = data.data || [];
 
             if (trades.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="10" class="text-center text-base-content/60">No trades found</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" class="text-center text-base-content/60">No trades found</td></tr>';
             } else {
                 trades.forEach(trade => {
                     const row = tbody.insertRow();
@@ -2538,8 +2539,9 @@ async function loadTradebook(strategyId) {
                         <td>${trade.exchange}</td>
                         <td>${trade.product}</td>
                         <td><span class="badge ${trade.action === 'BUY' ? 'badge-success' : 'badge-error'} badge-sm">${trade.action}</span></td>
-                        <td>₹${trade.average_price || 0}</td>
-                        <td>₹${trade.trade_value ? trade.trade_value.toFixed(2) : '0.00'}</td>
+                        <td>${trade.quantity || trade.filled_quantity || '-'}</td>
+                        <td>${trade.average_price || 0}</td>
+                        <td>${trade.trade_value ? trade.trade_value.toFixed(2) : '0.00'}</td>
                         <td class="text-xs">${trade.timestamp || '-'}</td>
                     `;
                 });

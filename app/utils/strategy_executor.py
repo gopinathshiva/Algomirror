@@ -1208,12 +1208,14 @@ class StrategyExecutor:
                 return 0
 
         # Fallback to original calculation if margin calculator not used
-        if leg.quantity and leg.quantity > 0:
-            # If quantity is explicitly set, use it
-            total_quantity = leg.quantity
-        elif leg.lots and leg.lots > 0:
-            # Otherwise calculate from lots
+        # IMPORTANT: Always recalculate from lots to use current lot size
+        # (lot sizes may differ for current vs next month contracts)
+        if leg.lots and leg.lots > 0:
+            # Calculate from lots using current lot size
             total_quantity = leg.lots * lot_size
+        elif leg.quantity and leg.quantity > 0:
+            # Fallback to stored quantity only if no lots defined
+            total_quantity = leg.quantity
         else:
             # Default to 1 lot
             total_quantity = lot_size

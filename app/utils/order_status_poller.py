@@ -101,6 +101,7 @@ class OrderStatusPoller:
     def _poll_loop(self):
         """Main polling loop - runs in background"""
         from app import create_app
+        import concurrent.futures
         app = create_app()
 
         with app.app_context():
@@ -116,9 +117,30 @@ class OrderStatusPoller:
 
                     logger.debug(f"[POLLING] Checking {len(orders_to_check)} pending orders")
 
-                    # Check each order (respecting rate limits)
+                    # Group orders by account for parallel checking
+                    # Rate limit is per-account, so different accounts can be checked in parallel
+                    orders_by_account = {}
                     for execution_id, order_info in orders_to_check.items():
-                        self._check_order_status(execution_id, order_info, app)
+                        account_key = f"{order_info['account_id']}_{order_info['account_name']}"
+                        if account_key not in orders_by_account:
+                            orders_by_account[account_key] = []
+                        orders_by_account[account_key].append((execution_id, order_info))
+
+                    # Check orders from different accounts in parallel
+                    # Each account's orders are checked sequentially (rate limit)
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(orders_by_account))) as executor:
+                        futures = []
+                        for account_key, account_orders in orders_by_account.items():
+                            # Submit one task per account - it will check all orders for that account
+                            future = executor.submit(
+                                self._check_account_orders,
+                                account_orders,
+                                app
+                            )
+                            futures.append(future)
+
+                        # Wait for all account checks to complete
+                        concurrent.futures.wait(futures, timeout=30)
 
                     # Wait 1 second before next polling cycle (faster updates)
                     sleep(1)
@@ -126,6 +148,11 @@ class OrderStatusPoller:
                 except Exception as e:
                     logger.error(f"[ERROR] Error in polling loop: {e}", exc_info=True)
                     sleep(3)  # Wait on error
+
+    def _check_account_orders(self, account_orders: list, app):
+        """Check all orders for a single account (called in parallel for different accounts)"""
+        for execution_id, order_info in account_orders:
+            self._check_order_status(execution_id, order_info, app)
 
     def _check_order_status(self, execution_id: int, order_info: Dict, app):
         """Check status of a single order"""

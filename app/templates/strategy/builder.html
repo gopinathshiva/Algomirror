@@ -2472,6 +2472,8 @@ async function refreshRiskStatusSection(fromFormValues = false) {
     }
 
     // Fetch from API for real-time P&L updates
+    // NOTE: This path is now only used for initial load, not auto-refresh
+    // Auto-refresh uses updateRiskValuesOnly() which doesn't rebuild HTML
     try {
         const response = await fetch(`/trading/api/risk-status?_=${Date.now()}`);
         const result = await response.json();
@@ -2480,10 +2482,8 @@ async function refreshRiskStatusSection(fromFormValues = false) {
             const strategyData = result.data.find(s => s.strategy_id === strategyIdForRisk);
 
             if (strategyData) {
-                // Update Risk Status section dynamically
-                updateRiskStatusHTML(strategyData);
-
-                // Also update the display values
+                // Only update display values, don't rebuild HTML
+                // HTML should only be rebuilt on explicit save (fromFormValues=true)
                 updateRiskStatusDisplay(result.data);
             }
         }
@@ -2652,12 +2652,36 @@ function startRiskStatusAutoRefresh() {
         clearInterval(riskStatusRefreshInterval);
     }
 
-    // Refresh every 5 seconds
+    // Refresh every 5 seconds - only update VALUES, not rebuild HTML
     riskStatusRefreshInterval = setInterval(() => {
         if (strategyIdForRisk && document.getElementById('riskStatusSection')) {
-            refreshRiskStatusSection();
+            // Don't use refreshRiskStatusSection here - it rebuilds HTML
+            // Just fetch P&L updates
+            updateRiskValuesOnly();
         }
     }, 5000);
+}
+
+// Update only the values (P&L, percentages) without rebuilding HTML structure
+async function updateRiskValuesOnly() {
+    if (!strategyIdForRisk) return;
+
+    try {
+        const response = await fetch(`/trading/api/risk-status?_=${Date.now()}`);
+        const result = await response.json();
+
+        if (result.status === 'success' && result.data) {
+            const strategyData = result.data.find(s => s.strategy_id === strategyIdForRisk);
+
+            if (strategyData) {
+                // Only update values, don't rebuild HTML
+                updateRiskStatusDisplay(result.data);
+            }
+            // If no data found, don't do anything - keep existing cards
+        }
+    } catch (e) {
+        console.error('Error updating risk values:', e);
+    }
 }
 
 // Start risk status stream and positions refresh when page loads
@@ -2687,12 +2711,31 @@ if (strategyIdForRisk && document.getElementById('riskStatusSection')) {
 
 // Combined Premium polling for Supertrend strategies
 let combinedPremiumInterval = null;
-const supertrendEnabled = {{ 'true' if strategy and strategy.supertrend_exit_enabled else 'false' }};
+
+// Check if supertrend is enabled (dynamically, not at page load)
+function isSupertrendEnabled() {
+    // Check the form checkbox first (for newly saved settings)
+    const checkbox = document.getElementById('useSupertrendExit');
+    if (checkbox) {
+        return checkbox.checked;
+    }
+    // Fallback to page load value
+    return {{ 'true' if strategy and strategy.supertrend_exit_enabled else 'false' }};
+}
 
 function startCombinedPremiumPolling() {
-    if (!supertrendEnabled || !strategyIdForRisk) {
+    // Clear any existing interval
+    if (combinedPremiumInterval) {
+        clearInterval(combinedPremiumInterval);
+        combinedPremiumInterval = null;
+    }
+
+    if (!isSupertrendEnabled() || !strategyIdForRisk) {
+        console.log('[Supertrend] Polling not started - enabled:', isSupertrendEnabled(), 'strategyId:', strategyIdForRisk);
         return;
     }
+
+    console.log('[Supertrend] Starting combined premium polling');
 
     // Initial fetch
     fetchCombinedPremium();

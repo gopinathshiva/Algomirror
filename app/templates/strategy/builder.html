@@ -2593,9 +2593,17 @@ function updateRiskStatusHTML(strategyData) {
         `;
     }
 
-    // Build HTML for Supertrend Exit
+    // Build HTML for Supertrend Exit (TWO cards: Supertrend Exit + Combined Premium)
     let supertrendHtml = '';
     if (strategyData.supertrend_exit_enabled) {
+        // Get supertrend parameters from form or use defaults
+        const multiplier = document.getElementById('supertrendMultiplier')?.value || '3.0';
+        const period = document.getElementById('supertrendPeriod')?.value || '10';
+        const timeframe = document.getElementById('supertrendTimeframe')?.value || '3m';
+        const exitType = document.getElementById('supertrendExitType')?.value || 'breakout';
+        const exitTypeLabel = exitType === 'breakout' ? 'Breakout (Net Credit)' : 'Breakdown (Net Debit)';
+
+        // Card 1: Supertrend Exit settings
         supertrendHtml = `
             <div class="bg-base-100 rounded-lg p-3" id="supertrendCard">
                 <div class="flex justify-between text-sm mb-2">
@@ -2605,17 +2613,47 @@ function updateRiskStatusHTML(strategyData) {
                         </svg>
                         Supertrend Exit
                     </span>
+                    <span class="font-mono font-bold text-xs">${multiplier},${period},${timeframe}</span>
+                </div>
+                <div class="text-sm mb-2">
+                    <span class="text-base-content/60">Type:</span>
+                    <span class="badge badge-outline badge-sm ml-1">${exitTypeLabel}</span>
+                </div>
+                <div class="text-sm">
+                    <span class="text-base-content/60">Status:</span>
+                    <span class="badge badge-success badge-sm ml-1" id="riskSupertrendStatus">Active</span>
+                </div>
+                <div class="mt-2">
+                    <a href="/tradingview/strategy/${strategyIdForRisk}" class="btn btn-info btn-xs" target="_blank">
+                        View Spread Monitor
+                    </a>
+                </div>
+            </div>
+            <!-- Card 2: Combined Premium -->
+            <div class="bg-base-100 rounded-lg p-3" id="combinedPremiumCard">
+                <div class="flex justify-between text-sm mb-2">
+                    <span class="flex items-center gap-1">
+                        <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                        </svg>
+                        Combined Premium
+                    </span>
                     <span class="badge badge-sm" id="riskPremiumConnection">
                         <span class="loading loading-spinner loading-xs"></span>
                     </span>
                 </div>
-                <div class="text-sm">
-                    <span class="text-base-content/60">Signal:</span>
-                    <span class="badge badge-info badge-sm ml-1" id="riskSupertrendSignal">--</span>
+                <div class="text-center my-2">
+                    <span class="font-mono font-bold text-2xl" id="riskCombinedPremium">--</span>
                 </div>
-                <div class="text-xs mt-2">
-                    <span class="text-base-content/60">Premium:</span>
-                    <span id="riskCombinedPremium" class="font-mono">--</span>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                        <span class="text-base-content/60">Supertrend:</span>
+                        <span class="font-mono ml-1" id="riskSupertrendValue">--</span>
+                    </div>
+                    <div>
+                        <span class="text-base-content/60">Signal:</span>
+                        <span class="badge badge-sm ml-1" id="riskSupertrendSignal">--</span>
+                    </div>
                 </div>
             </div>
         `;

@@ -1429,18 +1429,53 @@ def strategy_positions(strategy_id):
                 tsl_status['current_stop'] = strategy.trailing_sl_trigger_pnl
                 tsl_status['exit_reason'] = strategy.trailing_sl_exit_reason
             else:
-                # TSL ACTIVE FROM ENTRY - Calculate initial stop based on entry value
-                # Entry value = sum of (entry_price * abs(quantity)) for all open positions
-                entry_value = sum(
-                    float(p['average_price']) * abs(int(p['quantity']))
-                    for p in open_positions
-                )
+                # TSL ACTIVE FROM ENTRY - Calculate initial stop based on NET PREMIUM
+                # For combined strategies (straddles, spreads), we need to account for direction:
+                #   - BUY leg: Premium paid (debit) = positive contribution to net premium
+                #   - SELL leg: Premium received (credit) = negative contribution to net premium
+                # Net Premium > 0 means net debit (paid money)
+                # Net Premium < 0 means net credit (received money)
+
+                # Get open executions from database for accurate action info
+                open_executions = StrategyExecution.query.filter_by(
+                    strategy_id=strategy_id,
+                    status='entered'
+                ).join(StrategyLeg).all()
+
+                net_premium = 0
+                buy_premium = 0
+                sell_premium = 0
+
+                for exec in open_executions:
+                    if exec.entry_price and exec.quantity:
+                        premium = float(exec.entry_price) * abs(int(exec.quantity))
+                        # Check leg action to determine direction
+                        if exec.leg and exec.leg.action and exec.leg.action.upper() == 'BUY':
+                            net_premium += premium  # Debit (cost)
+                            buy_premium += premium
+                        else:  # SELL
+                            net_premium -= premium  # Credit (received)
+                            sell_premium += premium
+
+                # For TSL calculation, use absolute value of net premium
+                # This represents the actual capital at risk
+                entry_value = abs(net_premium)
+
+                # Detect strategy type for logging
+                is_combined = buy_premium > 0 and sell_premium > 0
+                is_net_credit = net_premium < 0
+                strategy_type = "Combined" if is_combined else "Single Leg"
+                premium_type = "Net Credit" if is_net_credit else "Net Debit"
+
+                logger.info(f"[TSL] Strategy {strategy.name}: {strategy_type} ({premium_type})")
+                logger.info(f"[TSL]   BUY premiums: {buy_premium:.2f}, SELL premiums: {sell_premium:.2f}")
+                logger.info(f"[TSL]   Net Premium: {net_premium:.2f}, Entry Value (abs): {entry_value:.2f}")
 
                 trailing_value = strategy.trailing_sl
                 trailing_type = strategy.trailing_sl_type or 'percentage'
 
                 # Calculate initial stop (max loss from entry)
-                # For 20% TSL: initial_stop = -20% of entry value
+                # For 20% TSL: initial_stop = -20% of entry value (net premium)
                 if trailing_type == 'percentage':
                     initial_stop_pnl = -entry_value * (trailing_value / 100)
                 elif trailing_type == 'points':
@@ -1451,7 +1486,7 @@ def strategy_positions(strategy_id):
                 # Set initial stop if not already set
                 if strategy.trailing_sl_initial_stop is None:
                     strategy.trailing_sl_initial_stop = initial_stop_pnl
-                    logger.info(f"[TSL STATE] Strategy {strategy.name}: Initial stop set at {initial_stop_pnl:.2f} (Entry value: {entry_value:.2f})")
+                    logger.info(f"[TSL STATE] Strategy {strategy.name}: Initial stop set at {initial_stop_pnl:.2f} (Net Premium: {net_premium:.2f}, Entry Value: {entry_value:.2f})")
 
                 # TSL is ALWAYS active from entry (no waiting state)
                 tsl_status['active'] = True

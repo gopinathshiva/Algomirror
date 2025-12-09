@@ -122,23 +122,20 @@
         <!-- Basic Information Card -->
         <div class="card bg-base-100 shadow-lg mb-6">
             <div class="card-body">
-                <h2 class="card-title mb-4">Basic Information</h2>
+                <h2 class="card-title mb-3">Basic Information</h2>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Row 1: Strategy Name, Risk Profile, Market Condition, Product Order Type -->
+                <div class="grid gap-2 mb-2" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
                     <div class="form-control">
-                        <label class="label">
-                            <span class="label-text">Strategy Name</span>
-                        </label>
-                        <input type="text" id="strategyName" class="input input-bordered"
+                        <label class="label py-1"><span class="label-text text-xs font-semibold text-black">Strategy Name</span></label>
+                        <input type="text" id="strategyName" class="input input-bordered input-sm text-black"
                                placeholder="e.g., Iron Condor Weekly" required
                                value="{{ strategy.name if strategy else '' }}">
                     </div>
 
                     <div class="form-control">
-                        <label class="label">
-                            <span class="label-text">Risk Profile</span>
-                        </label>
-                        <select id="riskProfile" class="select select-bordered" onchange="toggleLotFields()">
+                        <label class="label py-1"><span class="label-text text-xs font-semibold text-black">Risk Profile</span></label>
+                        <select id="riskProfile" class="select select-bordered select-sm text-black" onchange="toggleLotFields()">
                             <option value="fixed_lots" {% if strategy and strategy.risk_profile == 'fixed_lots' %}selected{% elif not strategy %}selected{% endif %}>Fixed Lot Size (Default)</option>
                             {% for quality in trade_qualities|sort(attribute='quality_grade') %}
                             <option value="grade_{{ quality.quality_grade }}" {% if strategy and strategy.risk_profile == 'grade_' ~ quality.quality_grade %}selected{% endif %}>
@@ -149,10 +146,8 @@
                     </div>
 
                     <div class="form-control">
-                        <label class="label">
-                            <span class="label-text">Market Condition</span>
-                        </label>
-                        <select id="marketCondition" class="select select-bordered">
+                        <label class="label py-1"><span class="label-text text-xs font-semibold text-black">Market Condition</span></label>
+                        <select id="marketCondition" class="select select-bordered select-sm text-black">
                             <option value="non_expiry" {% if strategy and strategy.market_condition == 'non_expiry' %}selected{% endif %}>Non-Expiry</option>
                             <option value="expiry" {% if strategy and strategy.market_condition == 'expiry' %}selected{% endif %}>Expiry Day</option>
                             <option value="any" {% if strategy and strategy.market_condition == 'any' %}selected{% endif %}>Any Day</option>
@@ -160,30 +155,27 @@
                     </div>
 
                     <div class="form-control">
-                        <label class="label">
-                            <span class="label-text">Product Order Type</span>
-                        </label>
-                        <select id="productOrderType" class="select select-bordered">
+                        <label class="label py-1"><span class="label-text text-xs font-semibold text-black">Product Order Type</span></label>
+                        <select id="productOrderType" class="select select-bordered select-sm text-black">
                             <option value="MIS" {% if strategy and strategy.product_order_type == 'MIS' %}selected{% elif not strategy %}selected{% endif %}>MIS (Intraday)</option>
                             <option value="NRML" {% if strategy and strategy.product_order_type == 'NRML' %}selected{% endif %}>NRML (Overnight)</option>
                         </select>
                     </div>
+                </div>
 
-                    <div class="form-control">
-                        <label class="label">
-                            <span class="label-text">Select Accounts</span>
+                <!-- Row 2: Select Accounts (Horizontal) -->
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs font-semibold text-black">Select Accounts</span></label>
+                    <div class="flex flex-wrap gap-4" id="accounts-container">
+                        {% for account in accounts %}
+                        <label class="flex items-center cursor-pointer gap-2">
+                            <input type="checkbox" class="checkbox checkbox-primary checkbox-sm"
+                                   name="accounts" value="{{ account.id }}"
+                                   {% if strategy and strategy.selected_accounts and account.id in strategy.selected_accounts %}checked{% endif %}
+                                   id="account-checkbox-{{ account.id }}">
+                            <span class="text-sm">{{ account.account_name }} ({{ account.broker_name }})</span>
                         </label>
-                        <div class="space-y-2" id="accounts-container">
-                            {% for account in accounts %}
-                            <label class="label cursor-pointer justify-start">
-                                <input type="checkbox" class="checkbox checkbox-primary mr-3"
-                                       name="accounts" value="{{ account.id }}"
-                                       {% if strategy and strategy.selected_accounts and account.id in strategy.selected_accounts %}checked{% endif %}
-                                       id="account-checkbox-{{ account.id }}">
-                                <span>{{ account.account_name }} ({{ account.broker_name }})</span>
-                            </label>
-                            {% endfor %}
-                        </div>
+                        {% endfor %}
                     </div>
                 </div>
             </div>

@@ -56,7 +56,7 @@ class RiskManager:
         self.is_running = False
         self.monitored_strategies: Dict[int, Strategy] = {}
 
-        logger.info("RiskManager initialized")
+        logger.debug("RiskManager initialized")
 
     def calculate_execution_pnl(self, execution: StrategyExecution) -> Tuple[float, float]:
         """
@@ -285,7 +285,7 @@ class RiskManager:
         max_profit_threshold = abs(float(strategy.max_profit))
 
         if current_pnl >= max_profit_threshold:
-            logger.info(
+            logger.debug(
                 f"Max Profit reached for {strategy.name}: "
                 f"P&L={current_pnl} >= Threshold={max_profit_threshold}"
             )
@@ -422,9 +422,9 @@ class RiskManager:
             strategy_type = "Combined" if is_combined else "Single Leg"
             premium_type = "Net Credit" if is_net_credit else "Net Debit"
 
-            logger.info(f"[TSL] Strategy {strategy.name}: {strategy_type} ({premium_type})")
-            logger.info(f"[TSL]   BUY premiums: {buy_premium:.2f}, SELL premiums: {sell_premium:.2f}")
-            logger.info(f"[TSL]   Net Premium: {net_premium:.2f}, Entry Value (abs): {entry_value:.2f}")
+            logger.debug(f"[TSL] Strategy {strategy.name}: {strategy_type} ({premium_type})")
+            logger.debug(f"[TSL]   BUY premiums: {buy_premium:.2f}, SELL premiums: {sell_premium:.2f}")
+            logger.debug(f"[TSL]   Net Premium: {net_premium:.2f}, Entry Value (abs): {entry_value:.2f}")
 
             # Calculate initial stop (max loss from entry)
             if trailing_type == 'percentage':
@@ -437,7 +437,7 @@ class RiskManager:
             # Set initial stop if not already set
             if strategy.trailing_sl_initial_stop is None:
                 strategy.trailing_sl_initial_stop = initial_stop_pnl
-                logger.info(f"[TSL STATE] Strategy {strategy.name}: Initial stop set at {initial_stop_pnl:.2f} (Net Premium: {net_premium:.2f}, Entry Value: {entry_value:.2f})")
+                logger.debug(f"[TSL STATE] Strategy {strategy.name}: Initial stop set at {initial_stop_pnl:.2f} (Net Premium: {net_premium:.2f}, Entry Value: {entry_value:.2f})")
 
             # TSL is ALWAYS active from entry (no waiting state)
             strategy.trailing_sl_active = True
@@ -515,7 +515,7 @@ class RiskManager:
             ).all()
 
             if not open_executions:
-                logger.info(f"No open positions to close for {strategy.name}")
+                logger.debug(f"No open positions to close for {strategy.name}")
                 return True
 
             exit_order_ids = []
@@ -575,7 +575,7 @@ class RiskManager:
                         order_id = response.get('orderid')
                         exit_order_ids.append(order_id)
 
-                        logger.info(
+                        logger.debug(
                             f"Exit order placed for {execution.symbol}: "
                             f"Order ID {order_id}"
                         )
@@ -610,7 +610,7 @@ class RiskManager:
             db.session.add(risk_event)
             db.session.commit()
 
-            logger.info(
+            logger.debug(
                 f"Risk exit completed for {strategy.name}: "
                 f"{len(exit_order_ids)} orders placed"
             )
@@ -701,7 +701,7 @@ class RiskManager:
             return
 
         self.is_running = True
-        logger.info("Risk monitoring started")
+        logger.debug("Risk monitoring started")
 
     def stop(self):
         """Stop risk monitoring"""
@@ -710,7 +710,7 @@ class RiskManager:
 
         self.is_running = False
         self.monitored_strategies.clear()
-        logger.info("Risk monitoring stopped")
+        logger.debug("Risk monitoring stopped")
 
     def get_monitoring_status(self) -> Dict:
         """

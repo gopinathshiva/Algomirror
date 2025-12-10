@@ -268,8 +268,8 @@ check_status "Failed to create virtual environment with uv"
 # Install Python dependencies using uv (faster installation)
 log_message "\nInstalling Python dependencies with uv..." "$BLUE"
 
-# Create a clean requirements file
-cat > /tmp/algomirror_requirements.txt << 'EOF'
+# Create a clean requirements file using tee (works better with heredoc)
+tee /tmp/algomirror_requirements.txt > /dev/null << 'EOF'
 alembic==1.16.4
 anyio==4.10.0
 APScheduler==3.11.0
@@ -337,6 +337,13 @@ wrapt==1.17.3
 WTForms==3.2.1
 gunicorn==23.0.0
 EOF
+
+# Verify requirements file was created
+if [ ! -s /tmp/algomirror_requirements.txt ]; then
+    log_message "Error: Failed to create requirements file" "$RED"
+    exit 1
+fi
+log_message "Requirements file created with $(wc -l < /tmp/algomirror_requirements.txt) packages" "$GREEN"
 
 # Install dependencies using uv
 sudo $UV_CMD pip install --python $VENV_PATH/bin/python -r /tmp/algomirror_requirements.txt

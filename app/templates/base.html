@@ -1,10 +1,19 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" class="theme-loading">
 <head>
+    <style>
+        /* Prevent theme flash on page load */
+        .theme-loading { visibility: hidden; }
+        .theme-ready { visibility: visible; }
+    </style>
     <script>
         (function() {
-            const savedTheme = localStorage.getItem('theme') || 'dark';
+            // Set theme immediately before any content renders
+            var savedTheme = localStorage.getItem('theme') || 'dark';
             document.documentElement.setAttribute('data-theme', savedTheme);
+            // Make page visible now that theme is set
+            document.documentElement.classList.remove('theme-loading');
+            document.documentElement.classList.add('theme-ready');
         })();
     </script>
     <meta charset="UTF-8">

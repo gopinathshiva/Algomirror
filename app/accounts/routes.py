@@ -261,7 +261,26 @@ def delete(account_id):
         db.session.delete(account)
         db.session.commit()
 
-        flash(f'Account "{account_name}" deleted successfully!', 'success')
+        # If deleted account was primary, reassign primary to another active account
+        if was_primary:
+            remaining_accounts = TradingAccount.query.filter_by(
+                user_id=current_user.id,
+                is_active=True
+            ).order_by(TradingAccount.created_at.asc()).all()
+
+            if remaining_accounts:
+                new_primary = remaining_accounts[0]
+                new_primary.is_primary = True
+                db.session.commit()
+
+                # Notify background service about new primary account
+                option_chain_service.on_primary_account_connected(new_primary)
+                current_app.logger.debug(f'Reassigned primary account to: {new_primary.account_name}')
+                flash(f'Account "{account_name}" deleted. Primary reassigned to "{new_primary.account_name}".', 'success')
+            else:
+                flash(f'Account "{account_name}" deleted successfully!', 'success')
+        else:
+            flash(f'Account "{account_name}" deleted successfully!', 'success')
 
     except Exception as e:
         db.session.rollback()

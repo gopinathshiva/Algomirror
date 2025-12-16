@@ -46,7 +46,7 @@
                         <li><a href="{{ url_for('accounts.edit', account_id=account.id) }}">Edit</a></li>
                         <div class="divider my-1"></div>
                         <li>
-                            <a href="#" onclick="deleteAccount({{ account.id }}, '{{ account.account_name }}')" class="text-error">
+                            <a href="#" onclick="deleteAccount({{ account.id }}, '{{ account.account_name }}', {{ 'true' if account.is_primary else 'false' }})" class="text-error">
                                 Delete
                             </a>
                         </li>
@@ -149,6 +149,12 @@
     <div class="modal-box">
         <h3 class="font-bold text-lg">Confirm Deletion</h3>
         <p class="py-4">Are you sure you want to delete the account "<span id="account-name"></span>"? This action cannot be undone.</p>
+        <div id="primary-warning" class="alert alert-warning mb-4 hidden">
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <span>This is your <strong>Primary Account</strong>. Primary status will be automatically reassigned to another active account.</span>
+        </div>
         <div class="modal-action">
             <form method="dialog">
                 <button class="btn">Cancel</button>
@@ -227,9 +233,18 @@ function refreshData(accountId) {
         });
 }
 
-function deleteAccount(accountId, accountName) {
+function deleteAccount(accountId, accountName, isPrimary) {
     deleteAccountId = accountId;
     document.getElementById('account-name').textContent = accountName;
+
+    // Show/hide primary warning
+    const primaryWarning = document.getElementById('primary-warning');
+    if (isPrimary) {
+        primaryWarning.classList.remove('hidden');
+    } else {
+        primaryWarning.classList.add('hidden');
+    }
+
     document.getElementById('delete-modal').showModal();
 }
 

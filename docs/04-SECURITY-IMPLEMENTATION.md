@@ -538,7 +538,20 @@ SECURITY_EVENTS = [
     'account_deleted',
     'admin_action',
     'rate_limit_exceeded',
-    'unauthorized_access'
+    'unauthorized_access',
+    # Risk management events (NEW)
+    'risk_max_loss_triggered',
+    'risk_max_profit_triggered',
+    'risk_trailing_stop_triggered',
+    'risk_supertrend_exit',
+    'risk_exit_failed',
+    'risk_exit_retry',
+    # WebSocket events (NEW)
+    'websocket_connected',
+    'websocket_disconnected',
+    'websocket_failover',
+    'option_chain_session_created',
+    'option_chain_session_expired'
 ]
 
 @app.after_request
@@ -548,8 +561,196 @@ def log_security_events(response):
         log_activity('unauthorized_access', request.url)
     elif response.status_code == 429:
         log_activity('rate_limit_exceeded', request.url)
-    
+
     return response
+```
+
+### 3. Risk Event Audit Logging (NEW)
+
+The RiskEvent model provides comprehensive audit logging for all automated risk management actions with IST timestamps.
+
+```python
+# app/models.py
+from pytz import timezone
+
+IST = timezone('Asia/Kolkata')
+
+class RiskEvent(db.Model):
+    """Audit log for risk management events"""
+    __tablename__ = 'risk_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_execution_id = db.Column(db.Integer, db.ForeignKey('strategy_executions.id'))
+    event_type = db.Column(db.String(50), nullable=False)  # max_loss, max_profit, trailing_stop, supertrend_exit
+    trigger_value = db.Column(db.Float)  # P&L value that triggered the event
+    threshold_value = db.Column(db.Float)  # Configured threshold
+    action_taken = db.Column(db.String(100))  # exit_initiated, exit_completed, exit_failed
+    details = db.Column(db.Text)  # JSON with full context
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(IST))
+
+    # Indexes for efficient querying
+    __table_args__ = (
+        db.Index('idx_risk_event_execution', 'strategy_execution_id'),
+        db.Index('idx_risk_event_type_time', 'event_type', 'created_at'),
+    )
+
+# Risk Manager logging implementation
+# app/utils/risk_manager.py
+def _log_risk_event(self, execution, event_type, trigger_value, threshold_value, action, details=None):
+    """Log risk event with IST timestamp for audit trail"""
+    try:
+        event = RiskEvent(
+            strategy_execution_id=execution.id,
+            event_type=event_type,
+            trigger_value=trigger_value,
+            threshold_value=threshold_value,
+            action_taken=action,
+            details=json.dumps(details) if details else None,
+            created_at=datetime.now(IST)  # IST timezone
+        )
+        db.session.add(event)
+        db.session.commit()
+
+        logger.info(f"Risk event logged: {event_type} for execution {execution.id}")
+    except Exception as e:
+        logger.error(f"Failed to log risk event: {e}")
+```
+
+#### Risk Event Types
+| Event Type | Description | Trigger Condition |
+|------------|-------------|-------------------|
+| `max_loss` | Maximum loss threshold breached | P&L <= -max_loss_amount |
+| `max_profit` | Profit target reached | P&L >= max_profit_amount |
+| `trailing_stop` | AFL-style trailing stop triggered | P&L <= trailing_stop_level |
+| `supertrend_exit` | Technical indicator exit signal | Supertrend direction change |
+
+### 4. WebSocket Session Security (NEW)
+
+On-demand option chain sessions use secure session management to prevent unauthorized access and resource exhaustion.
+
+```python
+# app/models.py
+class WebSocketSession(db.Model):
+    """Track on-demand WebSocket sessions for option chains"""
+    __tablename__ = 'websocket_sessions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.String(64), unique=True, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    account_id = db.Column(db.Integer, db.ForeignKey('trading_account.id'))
+    session_type = db.Column(db.String(50))  # option_chain, position_monitor
+    instrument = db.Column(db.String(50))  # NIFTY, BANKNIFTY, SENSEX
+    symbol_count = db.Column(db.Integer, default=0)
+    is_active = db.Column(db.Boolean, default=True)
+    last_heartbeat = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime)
+
+    # Security: Index for cleanup queries
+    __table_args__ = (
+        db.Index('idx_ws_session_active', 'is_active', 'expires_at'),
+        db.Index('idx_ws_session_user', 'user_id', 'is_active'),
+    )
+
+# app/utils/session_manager.py
+class SessionManager:
+    """Manage on-demand option chain sessions with security controls"""
+
+    SESSION_EXPIRY_MINUTES = 5  # Auto-expire after 5 minutes of inactivity
+    MAX_SESSIONS_PER_USER = 3   # Prevent resource exhaustion
+
+    def create_session(self, user_id, account_id, instrument):
+        """Create secure session with expiry"""
+        # Check session limit
+        active_count = WebSocketSession.query.filter_by(
+            user_id=user_id,
+            is_active=True
+        ).count()
+
+        if active_count >= self.MAX_SESSIONS_PER_USER:
+            raise SecurityError("Maximum session limit reached")
+
+        session = WebSocketSession(
+            session_id=secrets.token_urlsafe(32),
+            user_id=user_id,
+            account_id=account_id,
+            instrument=instrument,
+            session_type='option_chain',
+            expires_at=datetime.utcnow() + timedelta(minutes=self.SESSION_EXPIRY_MINUTES)
+        )
+
+        db.session.add(session)
+        db.session.commit()
+
+        log_activity('option_chain_session_created',
+                     f'Instrument: {instrument}', user_id)
+
+        return session.session_id
+
+    def cleanup_expired_sessions(self):
+        """Remove expired sessions (runs periodically)"""
+        expired = WebSocketSession.query.filter(
+            WebSocketSession.is_active == True,
+            WebSocketSession.expires_at < datetime.utcnow()
+        ).all()
+
+        for session in expired:
+            session.is_active = False
+            log_activity('option_chain_session_expired',
+                        f'Session: {session.session_id[:8]}...',
+                        session.user_id)
+
+        db.session.commit()
+```
+
+### 5. Background Service Security (NEW)
+
+Background services implement security controls to prevent unauthorized access and ensure data integrity.
+
+```python
+# app/utils/background_service.py
+class BackgroundService:
+    """Orchestrate background services with security controls"""
+
+    def __init__(self, app):
+        self._app = app
+        self._running = False
+        self._lock = threading.Lock()  # Prevent race conditions
+
+    def start_services(self):
+        """Start services only once with lock protection"""
+        with self._lock:
+            if self._running:
+                return
+
+            # Verify application context
+            if not self._app:
+                raise SecurityError("Invalid application context")
+
+            # Initialize services with app context
+            with self._app.app_context():
+                self._start_position_monitor()
+                self._start_risk_manager()
+                self._start_order_poller()
+
+            self._running = True
+
+# Risk Manager with rate limiting
+class RiskManager:
+    """Automated risk enforcement with security controls"""
+
+    CHECK_INTERVAL_SECONDS = 5  # Rate-limited checks
+    EXIT_RETRY_LIMIT = 3        # Prevent infinite retry loops
+
+    def check_risk_thresholds(self, execution):
+        """Check risk with retry limits"""
+        if execution.exit_retry_count >= self.EXIT_RETRY_LIMIT:
+            logger.error(f"Exit retry limit exceeded for execution {execution.id}")
+            self._log_risk_event(execution, 'exit_failed',
+                               action='retry_limit_exceeded')
+            return
+
+        # Perform risk checks...
 ```
 
 ## Network Security

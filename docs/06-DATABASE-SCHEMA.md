@@ -4,6 +4,20 @@
 
 AlgoMirror uses SQLAlchemy ORM with support for both SQLite (development) and PostgreSQL (production). The schema is designed for scalability, data integrity, and efficient querying.
 
+## Schema Evolution (2024 Updates)
+
+### New Tables Added
+- **RiskEvent**: Audit trail for automated risk management with IST timestamps
+- **WebSocketSession**: On-demand option chain session tracking with 5-minute expiry
+- **TradingHoursTemplate**: Database-driven market hours configuration
+- **MarketHoliday**: Holiday calendar management
+- **SpecialTradingSession**: Muhurat and special session handling
+
+### Enhanced Tables
+- **StrategyExecution**: Added `peak_pnl`, `exit_retry_count`, `exit_reason`, `underlying_symbol` for AFL-style trailing stop
+- **Strategy**: Added `supertrend_*` fields for technical indicator exits
+- **Position**: Added `ltp` field for WebSocket price updates
+
 ## Core Tables
 
 ### 1. Users Table
@@ -424,7 +438,9 @@ CREATE TABLE strategy_legs (
 );
 ```
 
-### 9. Strategy Executions Table
+### 9. Strategy Executions Table (ENHANCED)
+
+The StrategyExecution table has been enhanced to support AFL-style trailing stop-loss, BUY-FIRST exit priority, and Supertrend exits.
 
 ```sql
 CREATE TABLE strategy_executions (
@@ -438,28 +454,41 @@ CREATE TABLE strategy_executions (
     exit_order_id VARCHAR(100),
     symbol VARCHAR(100),
     exchange VARCHAR(20),
+    underlying_symbol VARCHAR(50),  -- NEW: For Supertrend calculation (NIFTY, BANKNIFTY, etc.)
     entry_price DECIMAL(10,2),
     exit_price DECIMAL(10,2),
     quantity INTEGER,
+    total_quantity INTEGER,  -- NEW: Total position quantity across all legs
 
     -- Status tracking
-    status VARCHAR(50),  -- 'pending', 'entered', 'exited', 'stopped', 'error'
+    status VARCHAR(50),  -- 'pending', 'active', 'exited', 'stopped', 'error'
     broker_order_status VARCHAR(50),
     entry_time TIMESTAMP,
     exit_time TIMESTAMP,
+    exit_reason VARCHAR(100),  -- 'max_loss', 'max_profit', 'trailing_stop', 'supertrend_exit', 'manual'
 
     -- P&L tracking
     realized_pnl DECIMAL(10,2),
     unrealized_pnl DECIMAL(10,2),
     brokerage DECIMAL(10,2),
-    exit_reason VARCHAR(100),
     error_message TEXT,
+
+    -- Risk Management (NEW fields)
+    risk_monitoring_enabled BOOLEAN DEFAULT TRUE,
+    max_loss_amount DECIMAL(10,2),
+    max_profit_amount DECIMAL(10,2),
+    trailing_sl_amount DECIMAL(10,2),
+    peak_pnl DECIMAL(10,2),  -- NEW: Tracks highest P&L for AFL-style trailing stop
+    exit_retry_count INTEGER DEFAULT 0,  -- NEW: Retry counter for failed exits
+
+    -- Supertrend Exit Settings (NEW)
+    supertrend_exit_enabled BOOLEAN DEFAULT FALSE,
+    supertrend_exit_type VARCHAR(20),  -- 'breakout' or 'breakdown'
 
     -- Real-time monitoring
     last_price DECIMAL(10,2),
     last_price_updated TIMESTAMP,
     websocket_subscribed BOOLEAN DEFAULT FALSE,
-    trailing_sl_triggered DECIMAL(10,2),
 
     -- Risk event capture
     sl_hit_at TIMESTAMP,
@@ -473,10 +502,54 @@ CREATE TABLE strategy_executions (
     FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE,
     FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE CASCADE,
     FOREIGN KEY (leg_id) REFERENCES strategy_legs(id) ON DELETE CASCADE,
-    INDEX idx_strategy_id (strategy_id),
-    INDEX idx_account_id (account_id),
-    INDEX idx_status (status)
+    INDEX idx_strategy_execution_status (status),
+    INDEX idx_strategy_execution_active (status, risk_monitoring_enabled)
 );
+```
+
+**Model Definition (Enhanced):**
+```python
+class StrategyExecution(db.Model):
+    __tablename__ = 'strategy_executions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_id = db.Column(db.Integer, db.ForeignKey('strategies.id'), nullable=False)
+    account_id = db.Column(db.Integer, db.ForeignKey('trading_accounts.id'), nullable=False)
+
+    # Position tracking
+    underlying_symbol = db.Column(db.String(50))  # For Supertrend calculation
+    total_quantity = db.Column(db.Integer)
+    status = db.Column(db.String(50))  # 'pending', 'active', 'exited', 'error'
+    exit_reason = db.Column(db.String(100))
+
+    # Risk Management
+    risk_monitoring_enabled = db.Column(db.Boolean, default=True)
+    max_loss_amount = db.Column(db.Float)
+    max_profit_amount = db.Column(db.Float)
+    trailing_sl_amount = db.Column(db.Float)
+    peak_pnl = db.Column(db.Float)  # For AFL-style trailing stop
+    exit_retry_count = db.Column(db.Integer, default=0)
+
+    # Supertrend Exit
+    supertrend_exit_enabled = db.Column(db.Boolean, default=False)
+    supertrend_exit_type = db.Column(db.String(20))
+
+    # Relationships
+    legs = db.relationship('ExecutionLeg', backref='execution', lazy='dynamic')
+    risk_events = db.relationship('RiskEvent', backref='execution')
+
+    __table_args__ = (
+        db.Index('idx_strategy_execution_status', 'status'),
+        db.Index('idx_strategy_execution_active', 'status', 'risk_monitoring_enabled'),
+    )
+```
+
+**AFL-Style Trailing Stop Logic:**
+```
+Initial Stop = -trailing_sl_amount
+Peak P&L = max(current_pnl, previous_peak)
+Trailing Stop Level = Initial Stop + Peak P&L (when peak > 0)
+Exit when: current_pnl <= Trailing Stop Level
 ```
 
 ## Margin & Risk Management Tables
@@ -566,28 +639,62 @@ CREATE TABLE margin_trackers (
 );
 ```
 
-### 13. Risk Events Table
+### 13. Risk Events Table (ENHANCED)
+
+The RiskEvent table provides comprehensive audit logging for automated risk management actions with IST (Asia/Kolkata) timestamps.
 
 ```sql
 CREATE TABLE risk_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    strategy_id INTEGER NOT NULL,
-    execution_id INTEGER,
-    event_type VARCHAR(50) NOT NULL,  -- 'max_loss', 'max_profit', 'trailing_sl', 'supertrend'
-    threshold_value DECIMAL(12,2),
-    current_value DECIMAL(12,2),
-    action_taken VARCHAR(50),  -- 'close_all', 'close_partial', 'alert_only'
-    exit_order_ids JSON,
-    triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    notes TEXT,
+    strategy_execution_id INTEGER NOT NULL,  -- Changed from strategy_id
+    event_type VARCHAR(50) NOT NULL,  -- 'max_loss', 'max_profit', 'trailing_stop', 'supertrend_exit'
+    trigger_value DECIMAL(12,2),  -- P&L value that triggered the event
+    threshold_value DECIMAL(12,2),  -- Configured threshold
+    action_taken VARCHAR(100),  -- 'exit_initiated', 'exit_completed', 'exit_failed', 'retry_limit_exceeded'
+    details TEXT,  -- JSON with full context (error messages, retry count, etc.)
+    created_at TIMESTAMP NOT NULL,  -- IST timezone (Asia/Kolkata)
 
-    FOREIGN KEY (strategy_id) REFERENCES strategies(id) ON DELETE CASCADE,
-    FOREIGN KEY (execution_id) REFERENCES strategy_executions(id) ON DELETE SET NULL,
-    INDEX idx_strategy_id (strategy_id),
-    INDEX idx_event_type (event_type),
-    INDEX idx_triggered_at (triggered_at)
+    FOREIGN KEY (strategy_execution_id) REFERENCES strategy_executions(id) ON DELETE CASCADE,
+    INDEX idx_risk_event_execution (strategy_execution_id),
+    INDEX idx_risk_event_type_time (event_type, created_at)
 );
 ```
+
+**Model Definition:**
+```python
+from pytz import timezone
+
+IST = timezone('Asia/Kolkata')
+
+class RiskEvent(db.Model):
+    """Audit log for risk management events with IST timestamps"""
+    __tablename__ = 'risk_events'
+
+    id = db.Column(db.Integer, primary_key=True)
+    strategy_execution_id = db.Column(db.Integer, db.ForeignKey('strategy_executions.id'), nullable=False)
+    event_type = db.Column(db.String(50), nullable=False)
+    trigger_value = db.Column(db.Float)  # P&L value that triggered
+    threshold_value = db.Column(db.Float)  # Configured threshold
+    action_taken = db.Column(db.String(100))
+    details = db.Column(db.Text)  # JSON with context
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(IST))
+
+    # Relationships
+    execution = db.relationship('StrategyExecution', backref='risk_events')
+
+    __table_args__ = (
+        db.Index('idx_risk_event_execution', 'strategy_execution_id'),
+        db.Index('idx_risk_event_type_time', 'event_type', 'created_at'),
+    )
+```
+
+**Event Types:**
+| Event Type | Description | Trigger Condition |
+|------------|-------------|-------------------|
+| `max_loss` | Maximum loss threshold breached | P&L <= -max_loss_amount |
+| `max_profit` | Profit target reached | P&L >= max_profit_amount |
+| `trailing_stop` | AFL-style trailing stop triggered | P&L <= trailing_stop_level |
+| `supertrend_exit` | Technical indicator exit signal | Supertrend direction change |
 
 ### 14. Trading Settings Table
 
@@ -613,76 +720,162 @@ CREATE TABLE trading_settings (
 - BANKNIFTY: lot_size=35, freeze_quantity=900, max_lots_per_order=25
 - SENSEX: lot_size=20, freeze_quantity=1000, max_lots_per_order=50
 
-### 15. WebSocket Sessions Table
+### 15. WebSocket Sessions Table (ENHANCED)
+
+The WebSocketSession table manages on-demand option chain sessions with 5-minute auto-expiry.
 
 ```sql
 CREATE TABLE websocket_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
     session_id VARCHAR(64) UNIQUE NOT NULL,
-    underlying VARCHAR(20) NOT NULL,  -- NIFTY, BANKNIFTY, SENSEX
-    expiry VARCHAR(20) NOT NULL,
-    subscribed_symbols JSON,
+    user_id INTEGER NOT NULL,
+    account_id INTEGER,
+    session_type VARCHAR(50),  -- 'option_chain', 'position_monitor'
+    instrument VARCHAR(50),  -- NIFTY, BANKNIFTY, SENSEX
+    symbol_count INTEGER DEFAULT 0,  -- Number of symbols subscribed
     is_active BOOLEAN DEFAULT TRUE,
     last_heartbeat TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP,
+    expires_at TIMESTAMP,  -- Auto-expires after 5 minutes of inactivity
 
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    INDEX idx_session_id (session_id),
-    INDEX idx_is_active (is_active)
+    FOREIGN KEY (account_id) REFERENCES trading_accounts(id) ON DELETE SET NULL,
+    INDEX idx_ws_session_active (is_active, expires_at),
+    INDEX idx_ws_session_user (user_id, is_active)
 );
 ```
 
-## Configuration Tables
+**Model Definition:**
+```python
+class WebSocketSession(db.Model):
+    """Track on-demand WebSocket sessions for option chains"""
+    __tablename__ = 'websocket_sessions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.String(64), unique=True, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    account_id = db.Column(db.Integer, db.ForeignKey('trading_accounts.id'))
+    session_type = db.Column(db.String(50))  # 'option_chain', 'position_monitor'
+    instrument = db.Column(db.String(50))  # NIFTY, BANKNIFTY, SENSEX
+    symbol_count = db.Column(db.Integer, default=0)
+    is_active = db.Column(db.Boolean, default=True)
+    last_heartbeat = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        db.Index('idx_ws_session_active', 'is_active', 'expires_at'),
+        db.Index('idx_ws_session_user', 'user_id', 'is_active'),
+    )
+```
+
+**Session Lifecycle:**
+1. Created when user visits option chain page (on-demand, not at market open)
+2. Heartbeat extends expiry by 5 minutes on user activity
+3. Auto-expires after 5 minutes of inactivity
+4. Cleanup job removes expired sessions periodically
+
+## Configuration Tables (NEW)
 
 ### 16. Trading Hours Template Table
+
+Database-driven trading hours replace hardcoded market times.
 
 ```sql
 CREATE TABLE trading_hours_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name VARCHAR(100) NOT NULL,
-    timezone VARCHAR(50) DEFAULT 'Asia/Kolkata',
+    name VARCHAR(50) NOT NULL,  -- 'equity', 'commodity', 'currency'
+    market_open TIME NOT NULL,  -- 09:15:00
+    market_close TIME NOT NULL,  -- 15:30:00
+    pre_open_start TIME,  -- 09:00:00
+    pre_open_end TIME,  -- 09:08:00
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### 10. Trading Sessions Table
+**Model Definition:**
+```python
+class TradingHoursTemplate(db.Model):
+    """Database-driven trading hours configuration"""
+    __tablename__ = 'trading_hours_templates'
 
-```sql
-CREATE TABLE trading_sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    template_id INTEGER NOT NULL,
-    day_of_week INTEGER NOT NULL,  -- 0=Monday, 6=Sunday
-    pre_market_start TIME,
-    pre_market_end TIME,
-    market_open TIME,
-    market_close TIME,
-    post_market_start TIME,
-    post_market_end TIME,
-    is_trading_day BOOLEAN DEFAULT TRUE,
-    
-    FOREIGN KEY (template_id) REFERENCES trading_hours_templates(id) ON DELETE CASCADE,
-    INDEX idx_template_id (template_id),
-    INDEX idx_day_of_week (day_of_week)
-);
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), nullable=False)  # 'equity', 'commodity', 'currency'
+    market_open = db.Column(db.Time, nullable=False)
+    market_close = db.Column(db.Time, nullable=False)
+    pre_open_start = db.Column(db.Time)
+    pre_open_end = db.Column(db.Time)
+    is_active = db.Column(db.Boolean, default=True)
 ```
 
-### 11. Market Holidays Table
+**Default Values:**
+| Market | Open | Close | Pre-Open |
+|--------|------|-------|----------|
+| Equity | 09:15 | 15:30 | 09:00-09:08 |
+| Commodity | 09:00 | 23:30 | - |
+| Currency | 09:00 | 17:00 | - |
+
+### 17. Market Holidays Table
 
 ```sql
 CREATE TABLE market_holidays (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    template_id INTEGER NOT NULL,
-    date DATE NOT NULL,
-    description VARCHAR(200),
-    holiday_type VARCHAR(50),  -- full_day/muhurat/special
-    
-    FOREIGN KEY (template_id) REFERENCES trading_hours_templates(id) ON DELETE CASCADE,
-    INDEX idx_template_id (template_id),
-    INDEX idx_date (date)
+    date DATE NOT NULL UNIQUE,
+    name VARCHAR(100),
+    markets JSON,  -- ['NSE', 'BSE', 'MCX']
+
+    INDEX idx_holiday_date (date)
 );
+```
+
+**Model Definition:**
+```python
+class MarketHoliday(db.Model):
+    """Track market holidays"""
+    __tablename__ = 'market_holidays'
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False, unique=True)
+    name = db.Column(db.String(100))
+    markets = db.Column(db.JSON)  # ['NSE', 'BSE', 'MCX']
+```
+
+### 18. Special Trading Sessions Table
+
+```sql
+CREATE TABLE special_trading_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date DATE NOT NULL,
+    name VARCHAR(100),
+    market_open TIME NOT NULL,
+    market_close TIME NOT NULL,
+
+    INDEX idx_special_session_date (date)
+);
+```
+
+**Model Definition:**
+```python
+class SpecialTradingSession(db.Model):
+    """Special trading sessions (muhurat, extended hours)"""
+    __tablename__ = 'special_trading_sessions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False)
+    name = db.Column(db.String(100))
+    market_open = db.Column(db.Time, nullable=False)
+    market_close = db.Column(db.Time, nullable=False)
+```
+
+**Example: Muhurat Trading**
+```python
+special_session = SpecialTradingSession(
+    date=date(2024, 11, 1),  # Diwali
+    name='Muhurat Trading',
+    market_open=time(18, 15),
+    market_close=time(19, 15)
+)
 ```
 
 ## WebSocket & Failover Tables

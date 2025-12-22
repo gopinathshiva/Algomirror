@@ -172,8 +172,8 @@
                                         </div>
                                         <div class="flex justify-between items-center">
                                             <span class="text-xs text-base-content/60">
-                                                {% if execution.entry_time %}
-                                                {{ execution.entry_time.strftime('%d %b, %H:%M') }}
+                                                {% if execution.entry_time_formatted %}
+                                                {{ execution.entry_time_formatted }}
                                                 {% else %}
                                                 -
                                                 {% endif %}
@@ -283,8 +283,8 @@
                             <td class="text-right whitespace-nowrap">{{ execution.quantity }}</td>
                             <td class="text-right whitespace-nowrap">₹{{ "%.2f"|format(execution.entry_price) }}</td>
                             <td class="whitespace-nowrap">
-                                {% if execution.entry_time %}
-                                {{ execution.entry_time.strftime('%d %b %Y, %H:%M') }}
+                                {% if execution.entry_time_formatted %}
+                                {{ execution.entry_time_formatted }}
                                 {% else %}
                                 -
                                 {% endif %}

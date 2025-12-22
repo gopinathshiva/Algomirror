@@ -860,7 +860,7 @@ class RiskManager:
                         execution.status = 'exit_pending'
                         execution.exit_order_id = order_id
                         execution.broker_order_status = 'open'
-                        execution.exit_time = get_ist_now()
+                        execution.exit_time = datetime.utcnow()
                         execution.exit_reason = risk_event.event_type
 
                         # Add exit order to poller to get actual fill price (same as entry orders)

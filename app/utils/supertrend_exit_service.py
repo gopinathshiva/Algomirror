@@ -738,7 +738,7 @@ class SupertrendExitService:
                             # Update execution immediately and COMMIT to release lock
                             execution.status = 'exit_pending'
                             execution.exit_order_id = order_id
-                            execution.exit_time = get_ist_now()
+                            execution.exit_time = datetime.utcnow()
                             execution.exit_reason = exit_reason
                             execution.broker_order_status = 'open'
                             db.session.commit()  # Commit each execution to release row lock

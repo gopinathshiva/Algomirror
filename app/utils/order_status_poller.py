@@ -290,8 +290,7 @@ class OrderStatusPoller:
                             # Fallback: use unrealized_pnl if exit price unavailable
                             if execution.unrealized_pnl:
                                 execution.realized_pnl = execution.unrealized_pnl
-                        if not execution.exit_time:
-                            execution.exit_time = datetime.utcnow()
+                        execution.exit_time = datetime.utcnow()
 
                         db.session.commit()
 
@@ -528,8 +527,7 @@ class OrderStatusPoller:
                                     execution.realized_pnl = (avg_price - execution.entry_price) * execution.quantity
                                 else:
                                     execution.realized_pnl = (execution.entry_price - avg_price) * execution.quantity
-                        if not execution.exit_time:
-                            execution.exit_time = datetime.utcnow()
+                        execution.exit_time = datetime.utcnow()
                         db.session.commit()
 
                         # Remove from polling queue if present

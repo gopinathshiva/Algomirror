@@ -6,6 +6,7 @@ from openalgo import api
 from datetime import datetime
 from sqlalchemy import desc
 from app import db
+from app.utils.time_utils import format_timestamp_to_ist
 import json
 
 @main_bp.route('/')
@@ -252,7 +253,8 @@ def account_positions():
                 'quantity': execution.quantity,
                 'entry_price': execution.entry_price,
                 'unrealized_pnl': execution.unrealized_pnl or 0,
-                'entry_time': execution.entry_time
+                'entry_time': execution.entry_time,
+                'entry_time_formatted': format_timestamp_to_ist(execution.entry_time, include_date=True, assume_tz="utc")
             })
 
             strategy_positions[strategy_id]['total_pnl'] += execution.unrealized_pnl or 0

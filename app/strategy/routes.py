@@ -11,12 +11,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def utc_to_ist(utc_time):
-    """Convert UTC datetime to IST (UTC+5:30)"""
-    if not utc_time:
-        return None
-    ist_offset = timedelta(hours=5, minutes=30)
-    return utc_time + ist_offset
+from app.utils.time_utils import utc_to_ist, format_trade_timestamp, format_timestamp_to_ist
 
 @strategy_bp.route('/')
 @login_required
@@ -297,6 +292,10 @@ def builder(strategy_id=None):
     legs_data = []
     if strategy and hasattr(strategy, 'legs_list'):
         legs_data = strategy.legs_list
+    if strategy:
+        strategy.max_loss_triggered_at_formatted = format_timestamp_to_ist(strategy.max_loss_triggered_at, include_date=True, assume_tz="ist")
+        strategy.max_profit_triggered_at_formatted = format_timestamp_to_ist(strategy.max_profit_triggered_at, include_date=True, assume_tz="ist")
+        strategy.supertrend_exit_triggered_at_formatted = format_timestamp_to_ist(strategy.supertrend_exit_triggered_at, include_date=True, assume_tz="ist")
 
     # Get trade quality settings for dynamic risk profile percentages
     trade_qualities = TradeQuality.query.filter_by(user_id=current_user.id).order_by(TradeQuality.quality_grade).all()
@@ -1140,7 +1139,7 @@ def strategy_orderbook(strategy_id):
             'pricetype': execution.leg.order_type or 'MARKET',
             'order_status': order_status,
             'trigger_price': 0.0,
-            'timestamp': utc_to_ist(execution.entry_time).strftime('%d-%b-%Y %H:%M:%S') if execution.entry_time else "",
+            'timestamp': format_trade_timestamp(execution.entry_time),
             'leg_id': execution.leg_id,
             'leg_number': execution.leg.leg_number if execution.leg else None
         })
@@ -1164,7 +1163,7 @@ def strategy_orderbook(strategy_id):
                 'pricetype': 'MARKET',
                 'order_status': 'complete',
                 'trigger_price': 0.0,
-                'timestamp': utc_to_ist(execution.exit_time).strftime('%d-%b-%Y %H:%M:%S') if execution.exit_time else ""
+                'timestamp': format_trade_timestamp(execution.exit_time)
             })
 
     # Calculate statistics like OpenAlgo
@@ -1241,7 +1240,7 @@ def strategy_tradebook(strategy_id):
             'product': actual_product,
             'quantity': trade.quantity,
             'average_price': trade.entry_price or 0.0,
-            'timestamp': utc_to_ist(trade.entry_time).strftime('%H:%M:%S') if trade.entry_time else "",
+            'timestamp': format_trade_timestamp(trade.entry_time),
             'trade_value': entry_value
         })
 
@@ -1262,7 +1261,7 @@ def strategy_tradebook(strategy_id):
                 'product': actual_product,
                 'quantity': trade.quantity,
                 'average_price': trade.exit_price,
-                'timestamp': utc_to_ist(trade.exit_time).strftime('%H:%M:%S') if trade.exit_time else "",
+                'timestamp': format_trade_timestamp(trade.exit_time),
                 'trade_value': exit_value
             })
 

@@ -9,6 +9,7 @@ from app.utils.websocket_manager import ProfessionalWebSocketManager
 from app.utils.background_service import option_chain_service
 from app.utils.session_manager import session_manager
 from datetime import datetime
+from app.utils.time_utils import format_timestamp_to_ist
 import json
 import time
 
@@ -113,6 +114,8 @@ def orderbook():
                     order['account_name'] = account.account_name
                     order['account_id'] = account.id
                     order['broker'] = account.broker_name
+                    if order.get('timestamp'):
+                        order['timestamp'] = format_timestamp_to_ist(order.get('timestamp'), include_date=True)
                 
                 orderbook_data.extend(orders)
                 
@@ -160,6 +163,10 @@ def tradebook():
                     trade['account_name'] = account.account_name
                     trade['account_id'] = account.id
                     trade['broker'] = account.broker_name
+                    if trade.get('timestamp'):
+                        trade['timestamp'] = format_timestamp_to_ist(trade.get('timestamp'), include_date=True)
+                    if trade.get('filltime'):
+                        trade['filltime'] = format_timestamp_to_ist(trade.get('filltime'), include_date=True)
                 
                 tradebook_data.extend(trades)
                 
@@ -1190,6 +1197,7 @@ def destroy_option_chain_session():
 def risk_monitor():
     """Risk Monitor page showing active strategies with stoploss/target tracking"""
     from app.models import Strategy, StrategyExecution, RiskEvent
+    from app.utils.time_utils import format_timestamp_to_ist
 
     # Get all active strategies with open positions for current user
     strategies = Strategy.query.filter_by(
@@ -1217,6 +1225,8 @@ def risk_monitor():
     recent_events = RiskEvent.query.filter(
         RiskEvent.strategy_id.in_([s['strategy'].id for s in active_strategies])
     ).order_by(RiskEvent.triggered_at.desc()).limit(20).all() if active_strategies else []
+    for event in recent_events:
+        event.triggered_at_formatted = format_timestamp_to_ist(event.triggered_at, include_date=True, assume_tz="ist")
 
     # Calculate totals
     total_positions = sum(len(s['executions']) for s in active_strategies)

@@ -587,7 +587,7 @@
                             </div>
                             <div class="text-sm mt-1">
                                 <span class="text-base-content/60">Time:</span>
-                                <span class="text-xs ml-1">{{ strategy.max_loss_triggered_at.strftime('%d/%m/%Y, %I:%M:%S %p') }} IST</span>
+                                <span class="text-xs ml-1">{{ strategy.max_loss_triggered_at_formatted }}</span>
                             </div>
                             {% endif %}
                             {% if strategy.auto_exit_on_max_loss and not strategy.max_loss_triggered_at %}
@@ -628,7 +628,7 @@
                             </div>
                             <div class="text-sm mt-1">
                                 <span class="text-base-content/60">Time:</span>
-                                <span class="text-xs ml-1">{{ strategy.max_profit_triggered_at.strftime('%d/%m/%Y, %I:%M:%S %p') }} IST</span>
+                                <span class="text-xs ml-1">{{ strategy.max_profit_triggered_at_formatted }}</span>
                             </div>
                             {% endif %}
                             {% if strategy.auto_exit_on_max_profit and not strategy.max_profit_triggered_at %}
@@ -711,7 +711,7 @@
                             {% if strategy.supertrend_exit_triggered_at %}
                             <div class="text-sm mt-1">
                                 <span class="text-base-content/60">Time:</span>
-                                <span class="text-xs ml-1">{{ strategy.supertrend_exit_triggered_at.strftime('%d/%m/%Y, %I:%M:%S %p') }} IST</span>
+                                <span class="text-xs ml-1">{{ strategy.supertrend_exit_triggered_at_formatted }}</span>
                             </div>
                             {% endif %}
                             {% endif %}
@@ -1922,6 +1922,11 @@ function saveStrategy(execute = false) {
         if (data.status === 'success') {
             showNotification('Strategy saved successfully', 'success');
 
+            if (!strategyIdForRisk && data.strategy_id) {
+                strategyIdForRisk = data.strategy_id;
+                window.history.replaceState({}, '', `/strategy/builder/${data.strategy_id}`);
+            }
+
             // Refresh risk status section after save to show updated parameters
             // Use form values for immediate update (true), API will update later with P&L
             setTimeout(() => {
@@ -2388,7 +2393,7 @@ function updateRiskMonitorTable(strategyData) {
 
 // Risk Status SSE Connection
 let riskEventSource = null;
-const strategyIdForRisk = {{ strategy.id|tojson if strategy else 'null' }};
+let strategyIdForRisk = {{ strategy.id|tojson if strategy else 'null' }};
 
 function startRiskStatusStream() {
     if (!strategyIdForRisk || !document.getElementById('riskStatusSection')) {
@@ -2428,6 +2433,12 @@ function startRiskStatusStream() {
         }
         setTimeout(() => startRiskStatusStream(), 5000);
     };
+}
+
+function formatIstTimestamp(isoString) {
+    if (!isoString) return '--';
+    const date = new Date(isoString);
+    return `${date.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
 }
 
 function updateRiskStatusDisplay(data) {
@@ -2575,10 +2586,9 @@ function updateRiskStatusDisplay(data) {
                 if (strategyData.supertrend_exit_triggered_at) {
                     const timeDiv = document.createElement('div');
                     timeDiv.className = 'text-sm mt-1';
-                    const exitTime = new Date(strategyData.supertrend_exit_triggered_at);
                     timeDiv.innerHTML = `
                         <span class="text-base-content/60">Time:</span>
-                        <span class="text-xs ml-1">${exitTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>
+                        <span class="text-xs ml-1">${formatIstTimestamp(strategyData.supertrend_exit_triggered_at)}</span>
                     `;
                     reasonDiv.insertAdjacentElement('afterend', timeDiv);
                 }
@@ -2613,8 +2623,7 @@ function updateRiskStatusDisplay(data) {
                 if (strategyData.max_loss_triggered_at) {
                     const timeDiv = document.createElement('div');
                     timeDiv.className = 'text-sm mt-1';
-                    const exitTime = new Date(strategyData.max_loss_triggered_at);
-                    timeDiv.innerHTML = `<span class="text-base-content/60">Time:</span><span class="text-xs ml-1">${exitTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>`;
+                    timeDiv.innerHTML = `<span class="text-base-content/60">Time:</span><span class="text-xs ml-1">${formatIstTimestamp(strategyData.max_loss_triggered_at)}</span>`;
                     reasonDiv.insertAdjacentElement('afterend', timeDiv);
                 }
             }
@@ -2648,8 +2657,7 @@ function updateRiskStatusDisplay(data) {
                 if (strategyData.max_profit_triggered_at) {
                     const timeDiv = document.createElement('div');
                     timeDiv.className = 'text-sm mt-1';
-                    const exitTime = new Date(strategyData.max_profit_triggered_at);
-                    timeDiv.innerHTML = `<span class="text-base-content/60">Time:</span><span class="text-xs ml-1">${exitTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</span>`;
+                    timeDiv.innerHTML = `<span class="text-base-content/60">Time:</span><span class="text-xs ml-1">${formatIstTimestamp(strategyData.max_profit_triggered_at)}</span>`;
                     reasonDiv.insertAdjacentElement('afterend', timeDiv);
                 }
             }
@@ -2699,8 +2707,7 @@ function updateRiskStatusDisplay(data) {
             if (timeDiv) {
                 timeDiv.classList.remove('hidden');
                 if (timeEl) {
-                    const exitTime = new Date(strategyData.trailing_sl_triggered_at);
-                    timeEl.textContent = exitTime.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+                    timeEl.textContent = formatIstTimestamp(strategyData.trailing_sl_triggered_at);
                 }
             }
         } else {
@@ -2712,7 +2719,7 @@ function updateRiskStatusDisplay(data) {
     // Update last update time
     const lastUpdateEl = document.getElementById('riskLastUpdate');
     if (lastUpdateEl) {
-        lastUpdateEl.textContent = new Date().toLocaleTimeString();
+        lastUpdateEl.textContent = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' });
     }
 }
 

@@ -211,18 +211,22 @@ class PositionMonitor:
                 strategy = execution.strategy
                 has_strategy_sl = False
                 has_strategy_tp = False
+                has_strategy_tsl = False
                 if strategy:
                     has_strategy_sl = strategy.max_loss is not None and strategy.max_loss > 0
                     has_strategy_tp = strategy.max_profit is not None and strategy.max_profit > 0
+                    # CRITICAL: Include trailing stop loss - must monitor for TSL to work!
+                    has_strategy_tsl = strategy.trailing_sl is not None and strategy.trailing_sl > 0
 
-                # Include if ANY risk management is configured
-                if has_leg_sl or has_leg_tp or has_strategy_sl or has_strategy_tp:
+                # Include if ANY risk management is configured (including TSL!)
+                if has_leg_sl or has_leg_tp or has_strategy_sl or has_strategy_tp or has_strategy_tsl:
                     filtered_executions.append(execution)
                     logger.debug(f"Position {execution.symbol} has risk management "
                                f"(Leg SL={leg.stop_loss_value if leg else None}, "
                                f"Leg TP={leg.take_profit_value if leg else None}, "
                                f"Strategy SL={strategy.max_loss if strategy else None}, "
-                               f"Strategy TP={strategy.max_profit if strategy else None})")
+                               f"Strategy TP={strategy.max_profit if strategy else None}, "
+                               f"TSL={strategy.trailing_sl if strategy else None})")
                 else:
                     logger.debug(f"Skipping {execution.symbol} - no risk management configured")
 
@@ -350,12 +354,15 @@ class PositionMonitor:
         strategy = execution.strategy
         has_strategy_sl = False
         has_strategy_tp = False
+        has_strategy_tsl = False
         if strategy:
             has_strategy_sl = strategy.max_loss is not None and strategy.max_loss > 0
             has_strategy_tp = strategy.max_profit is not None and strategy.max_profit > 0
+            # CRITICAL: Include trailing stop loss - must monitor for TSL to work!
+            has_strategy_tsl = strategy.trailing_sl is not None and strategy.trailing_sl > 0
 
-        # Only subscribe if ANY risk management is configured
-        if not (has_leg_sl or has_leg_tp or has_strategy_sl or has_strategy_tp):
+        # Only subscribe if ANY risk management is configured (including TSL!)
+        if not (has_leg_sl or has_leg_tp or has_strategy_sl or has_strategy_tp or has_strategy_tsl):
             logger.debug(f"Order filled for {execution.symbol} but no risk management configured - skipping WebSocket subscription")
             return
 

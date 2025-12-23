@@ -362,46 +362,68 @@ class RiskManager:
                 logger.debug(f"[P&L] Strategy {strategy.name}: {len(executions)} executions, statuses: {status_counts}")
                 print(f"[P&L DEBUG] {strategy.name}: {len(executions)} executions, open={len(open_executions)}, statuses={status_counts}")
 
-            # Check if any WebSocket prices are stale (need API fallback)
+            # ALWAYS fetch fresh prices from API for accurate P&L calculation
+            # This ensures TSL checks use real prices, not stale execution.last_price
             api_prices = {}
-            needs_api_fallback = False
+            executions_with_fallback_price = 0  # Track how many executions use fallback
 
             if open_executions:
+                # Check if any execution is missing WebSocket price or has stale data
+                # Consider price stale if last_price_updated is missing or > 60 seconds old
                 now = datetime.now()
-                stale_threshold = 30  # seconds
+                stale_threshold_seconds = 60
 
+                missing_ws_price = False
                 for exec in open_executions:
-                    # Check if WebSocket price is stale or missing
-                    if not exec.last_price or not exec.last_price_updated:
-                        needs_api_fallback = True
+                    if not exec.last_price or exec.last_price <= 0:
+                        missing_ws_price = True
+                        logger.debug(f"[P&L] {exec.symbol}: last_price missing or zero")
+                        break
+                    if not exec.last_price_updated:
+                        missing_ws_price = True
+                        logger.debug(f"[P&L] {exec.symbol}: last_price_updated is None")
+                        break
+                    # Check if price is stale
+                    try:
+                        age = (now - exec.last_price_updated).total_seconds()
+                        if age > stale_threshold_seconds:
+                            missing_ws_price = True
+                            logger.debug(f"[P&L] {exec.symbol}: price is stale ({age:.0f}s old)")
+                            break
+                    except Exception:
+                        missing_ws_price = True
                         break
 
-                    price_age = (now - exec.last_price_updated).total_seconds()
-                    if price_age > stale_threshold:
-                        needs_api_fallback = True
-                        break
-
-                # Only fetch from API if WebSocket prices are stale
-                if needs_api_fallback:
-                    logger.debug("WebSocket prices stale, using API fallback")
+                if missing_ws_price:
+                    logger.debug("[P&L] WebSocket prices missing/stale, fetching from API")
                     api_prices = self._get_prices_with_failover()
+                    if api_prices:
+                        logger.info(f"[P&L] Got API prices for {len(api_prices)} symbols")
+                        print(f"[P&L] Fetched API prices: {list(api_prices.keys())}")
+                    else:
+                        logger.warning("[P&L] API price fetch returned empty - will use entry price fallback")
 
             for execution in executions:
                 # PRIORITY: WebSocket price (fresh) > API price (fallback) > entry price
                 current_price = None
+                price_source = None
 
                 if execution.status == 'entered':
                     # Try WebSocket price first (from position_monitor)
                     if execution.last_price and execution.last_price > 0:
                         current_price = float(execution.last_price)
+                        price_source = 'websocket'
                         logger.debug(f"[P&L] {execution.symbol}: Using WebSocket price {current_price}")
                     # Fallback to API price if WebSocket stale
                     elif api_prices.get(execution.symbol):
                         current_price = api_prices.get(execution.symbol)
+                        price_source = 'api'
                         logger.debug(f"[P&L] {execution.symbol}: Using API price {current_price}")
                     # FINAL fallback to entry price (assume breakeven)
                     elif execution.entry_price and execution.entry_price > 0:
                         current_price = float(execution.entry_price)
+                        price_source = 'entry_fallback'
+                        executions_with_fallback_price += 1
                         logger.warning(f"[P&L] {execution.symbol}: NO PRICE DATA! Using entry price {current_price} as fallback (P&L=0)")
                         print(f"[P&L WARNING] {execution.symbol}: No WebSocket/API price, using entry price {current_price}")
 
@@ -431,11 +453,20 @@ class RiskManager:
 
             total_pnl = total_realized + total_unrealized
 
+            # Flag if P&L is unreliable (all executions using entry price fallback)
+            prices_unreliable = (executions_with_fallback_price == len(open_executions)) and len(open_executions) > 0
+            if prices_unreliable:
+                logger.warning(f"[P&L] Strategy {strategy.name}: ALL {len(open_executions)} executions using entry price fallback - P&L is UNRELIABLE")
+                print(f"[P&L UNRELIABLE] {strategy.name}: All prices are entry price fallbacks!")
+
             return {
                 'realized_pnl': round(total_realized, 2),
                 'unrealized_pnl': round(total_unrealized, 2),
                 'total_pnl': round(total_pnl, 2),
-                'valid': True  # Calculation succeeded
+                'valid': True,  # Calculation succeeded
+                'prices_unreliable': prices_unreliable,  # True if all prices are fallbacks
+                'fallback_count': executions_with_fallback_price,
+                'open_count': len(open_executions)
             }
 
         except Exception as e:
@@ -444,7 +475,10 @@ class RiskManager:
                 'realized_pnl': 0.0,
                 'unrealized_pnl': 0.0,
                 'total_pnl': 0.0,
-                'valid': False  # Calculation failed - DO NOT use for risk decisions
+                'valid': False,  # Calculation failed - DO NOT use for risk decisions
+                'prices_unreliable': True,
+                'fallback_count': 0,
+                'open_count': 0
             }
 
     def check_max_loss(self, strategy: Strategy) -> Optional[RiskEvent]:
@@ -475,6 +509,11 @@ class RiskManager:
         # Skip if P&L calculation failed (prevents false triggers)
         if not pnl_data.get('valid', True):
             logger.warning(f"[MaxLoss] Strategy {strategy.name}: P&L calculation INVALID, skipping check")
+            return None
+
+        # Skip if prices are unreliable (all fallback to entry price)
+        if pnl_data.get('prices_unreliable', False):
+            logger.warning(f"[MaxLoss] Strategy {strategy.name}: Prices unreliable, skipping check")
             return None
 
         # Check if loss exceeds threshold (loss is negative)
@@ -534,6 +573,11 @@ class RiskManager:
         # Skip if P&L calculation failed (prevents false triggers)
         if not pnl_data.get('valid', True):
             logger.warning(f"[MaxProfit] Strategy {strategy.name}: P&L calculation INVALID, skipping check")
+            return None
+
+        # Skip if prices are unreliable (all fallback to entry price)
+        if pnl_data.get('prices_unreliable', False):
+            logger.warning(f"[MaxProfit] Strategy {strategy.name}: Prices unreliable, skipping check")
             return None
 
         # Check if profit exceeds threshold (profit is positive)
@@ -631,6 +675,16 @@ class RiskManager:
                 logger.warning(f"[TSL] Strategy {strategy.name}: P&L calculation INVALID, skipping TSL check")
                 return None
 
+            # CRITICAL: Skip TSL check if prices are unreliable (all fallback to entry price)
+            # This prevents both false positive (exit when profitable) and false negative (miss exit when losing)
+            if pnl_data.get('prices_unreliable', False):
+                logger.warning(
+                    f"[TSL] Strategy {strategy.name}: SKIPPING - Prices unreliable "
+                    f"({pnl_data.get('fallback_count', 0)}/{pnl_data.get('open_count', 0)} using entry price fallback)"
+                )
+                print(f"[TSL SKIP] {strategy.name}: Prices unreliable - waiting for real data")
+                return None
+
             # Get trailing SL settings
             trailing_type = strategy.trailing_sl_type or 'percentage'
             trailing_value = float(strategy.trailing_sl)
@@ -723,6 +777,17 @@ class RiskManager:
             # Log current TSL status
             logger.info(f"[TSL CHECK] Strategy {strategy.name}: P&L={current_pnl:.2f}, Peak={current_peak:.2f}, Stop={current_stop:.2f}")
             print(f"[TSL CHECK] {strategy.name}: P&L={current_pnl:.2f}, Peak={current_peak:.2f}, Stop={current_stop:.2f}")
+
+            # SECONDARY SAFETY NET: Skip if P&L is suspiciously close to zero with open positions
+            # P&L exactly 0 is very rare during market hours - likely indicates price data issue
+            # This catches edge cases not covered by the `prices_unreliable` check
+            if abs(current_pnl) < 1.0 and len(open_executions) > 0:
+                logger.warning(
+                    f"[TSL] Strategy {strategy.name}: SKIPPING - P&L={current_pnl:.2f} is near-zero with "
+                    f"{len(open_executions)} open positions (likely price data issue). Stop={current_stop:.2f}"
+                )
+                print(f"[TSL SKIP] {strategy.name}: P&L~0 with {len(open_executions)} open positions - waiting for real prices")
+                return None
 
             # Exit when P&L drops to or below current stop
             if current_pnl <= current_stop:
